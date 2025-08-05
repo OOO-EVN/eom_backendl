@@ -4,11 +4,10 @@ import (
     "database/sql"
     "encoding/json"
     "net/http"
-    "eom_backend/models"
-    "eom_backend/services"
-    "eom_backend/config"
     "log"
 
+    "github.com/evn/eom_backendl/models"
+    "github.com/evn/eom_backendl/services"
     "golang.org/x/crypto/bcrypt"
 )
 

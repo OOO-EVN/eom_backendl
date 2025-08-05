@@ -5,10 +5,10 @@ import (
     "log"
     "net/http"
 
-    "eom_backend/config"
-    "eom_backend/db"
-    "eom_backend/handlers"
-    "eom_backend/services"
+    "github.com/evn/eom_backendl/config"
+    "github.com/evn/eom_backendl/db"
+    "github.com/evn/eom_backendl/handlers"
+    "github.com/evn/eom_backendl/services"
 
     "github.com/go-chi/chi/v5"
     "github.com/go-chi/chi/v5/middleware"
