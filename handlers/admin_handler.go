@@ -1,133 +1,97 @@
 package handlers
+
 import (
-
-    "database/sql"
-
-    "encoding/json"
-
-    "net/http"
-
-    "strconv"
-
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"github.com/go-chi/chi/v5"
 )
 
-
-type AdminHandler struct {
-
-    DB *sql.DB
-
+// Структура для обновления роли пользователя
+type UserRoleUpdate struct {
+	Role string `json:"role"`
 }
 
+// Хэндлер для обновления роли пользователя
+func UpdateUserRoleHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userIDStr := chi.URLParam(r, "userID")
+		userID, err := strconv.Atoi(userIDStr)
+		if err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid User ID")
+			return
+		}
 
-func NewAdminHandler(db *sql.DB) *AdminHandler {
+		var update UserRoleUpdate
+		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
 
-    return &AdminHandler{DB: db}
+		// Проверяем, существует ли такая роль
+		var roleExists int
+		err = db.QueryRow("SELECT COUNT(*) FROM roles WHERE name = ?", update.Role).Scan(&roleExists)
+		if err != nil || roleExists == 0 {
+			RespondWithError(w, http.StatusBadRequest, "Role does not exist")
+			return
+		}
 
+		_, err = db.Exec("UPDATE users SET role = ? WHERE id = ?", update.Role, userID)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "Failed to update user role: "+err.Error())
+			return
+		}
+
+		RespondWithJSON(w, http.StatusOK, map[string]string{"message": "User role updated successfully"})
+	}
 }
 
-
-func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
-
-    rows, err := h.DB.Query("SELECT id, username, first_name, role FROM users ORDER BY id")
-
-    if err != nil {
-
-        RespondWithError(w, http.StatusInternalServerError, "Database error")
-
-        return
-
-    }
-
-    defer rows.Close()
-
-
-    var users []map[string]interface{}
-
-    for rows.Next() {
-
-        var user struct {
-
-            ID        int
-
-            Username  string
-
-            FirstName string
-
-            Role      string
-
-        }
-
-        if err := rows.Scan(&user.ID, &user.Username, &user.FirstName, &user.Role); err != nil {
-
-            RespondWithError(w, http.StatusInternalServerError, "Database scan error")
-
-            return
-
-        }
-
-        users = append(users, map[string]interface{}{
-
-            "id":        user.ID,
-
-            "username":  user.Username,
-
-            "firstName": user.FirstName,
-
-            "role":      user.Role,
-
-        })
-
-    }
-
-
-    RespondWithJSON(w, http.StatusOK, users)
-
+// Структура для создания/удаления роли
+type Role struct {
+	Name string `json:"name"`
 }
 
+// Хэндлер для добавления новой роли
+func CreateRoleHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var newRole Role
+		if err := json.NewDecoder(r.Body).Decode(&newRole); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
 
-func (h *AdminHandler) UpdateUserRole(w http.ResponseWriter, r *http.Request) {
+		_, err := db.Exec("INSERT INTO roles (name) VALUES (?)", newRole.Name)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "Failed to create new role: "+err.Error())
+			return
+		}
 
-    userID, err := strconv.Atoi(r.URL.Query().Get("id"))
+		RespondWithJSON(w, http.StatusCreated, map[string]string{"message": "Role created successfully"})
+	}
+}
 
-    if err != nil {
+// Хэндлер для удаления роли
+func DeleteRoleHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var roleToDelete Role
+		if err := json.NewDecoder(r.Body).Decode(&roleToDelete); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
 
-        RespondWithError(w, http.StatusBadRequest, "Invalid user ID")
+		// Защита от удаления обязательных ролей
+		if roleToDelete.Name == "user" || roleToDelete.Name == "superadmin" {
+			RespondWithError(w, http.StatusBadRequest, "Cannot delete this role")
+			return
+		}
 
-        return
+		_, err := db.Exec("DELETE FROM roles WHERE name = ?", roleToDelete.Name)
+		if err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "Failed to delete role: "+err.Error())
+			return
+		}
 
-    }
-
-
-    var input struct {
-
-        Role string `json:"role"`
-
-    }
-
-    if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-
-        RespondWithError(w, http.StatusBadRequest, "Invalid request data")
-
-        return
-
-    }
-
-
-    _, err = h.DB.Exec("UPDATE users SET role = ? WHERE id = ?", input.Role, userID)
-
-    if err != nil {
-
-        RespondWithError(w, http.StatusInternalServerError, "Failed to update user role")
-
-        return
-
-    }
-
-
-    RespondWithJSON(w, http.StatusOK, map[string]string{
-
-        "message": "User role updated successfully",
-
-    })
-
-} 
+		RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Role deleted successfully"})
+	}
+}
