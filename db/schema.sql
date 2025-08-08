@@ -3,5 +3,8 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT,
     first_name TEXT,
-    telegram_id INTEGER UNIQUE
+    telegram_id INTEGER UNIQUE,
+    role TEXT NOT NULL DEFAULT 'user',
+    avatar_url TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

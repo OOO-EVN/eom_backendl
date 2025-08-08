@@ -1,0 +1,76 @@
+package handlers
+
+import (
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"strconv"
+)
+
+type AdminHandler struct {
+	db *sql.DB
+}
+
+func NewAdminHandler(db *sql.DB) *AdminHandler {
+	return &AdminHandler{db: db}
+}
+
+func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query("SELECT id, username, first_name, role FROM users")
+	if err != nil {
+		RespondWithError(w, http.StatusInternalServerError, "Failed to query users: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var users []map[string]interface{}
+	for rows.Next() {
+		var user struct {
+			ID        int
+			Username  sql.NullString
+			FirstName sql.NullString
+			Role      string
+		}
+		if err := rows.Scan(&user.ID, &user.Username, &user.FirstName, &user.Role); err != nil {
+			RespondWithError(w, http.StatusInternalServerError, "Failed to scan user row: "+err.Error())
+			return
+		}
+		users = append(users, map[string]interface{}{
+			"id":         user.ID,
+			"username":   user.Username.String,
+			"first_name": user.FirstName.String,
+			"role":       user.Role,
+		})
+	}
+	RespondWithJSON(w, http.StatusOK, users)
+}
+
+func (h *AdminHandler) UpdateUserRole(w http.ResponseWriter, r *http.Request) {
+	userIDStr := r.URL.Query().Get("id")
+	if userIDStr == "" {
+		RespondWithError(w, http.StatusBadRequest, "User ID is required")
+		return
+	}
+
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		RespondWithError(w, http.StatusBadRequest, "Invalid User ID")
+		return
+	}
+
+	var requestBody struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+		RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	_, err = h.db.Exec("UPDATE users SET role = ? WHERE id = ?", requestBody.Role, userID)
+	if err != nil {
+		RespondWithError(w, http.StatusInternalServerError, "Failed to update user role: "+err.Error())
+		return
+	}
+
+	RespondWithJSON(w, http.StatusOK, map[string]string{"message": "User role updated successfully"})
+}

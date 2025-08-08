@@ -28,7 +28,7 @@ func NewConfig() *Config {
 
     port := os.Getenv("SERVER_PORT")
     if port == "" {
-        port = "8080"
+        port = "6066"
     }
     
     telegramBotToken := os.Getenv("TELEGRAM_BOT_TOKEN")
