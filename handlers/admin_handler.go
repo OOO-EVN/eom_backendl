@@ -1,19 +1,19 @@
-package handlers
+	package handlers
 
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
+
 	"github.com/go-chi/chi/v5"
 )
 
-// Структура для обновления роли пользователя
 type UserRoleUpdate struct {
 	Role string `json:"role"`
 }
 
-// Хэндлер для обновления роли пользователя
 func UpdateUserRoleHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userIDStr := chi.URLParam(r, "userID")
@@ -29,15 +29,14 @@ func UpdateUserRoleHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Проверяем, существует ли такая роль
 		var roleExists int
-		err = db.QueryRow("SELECT COUNT(*) FROM roles WHERE name = ?", update.Role).Scan(&roleExists)
+		err = db.QueryRow("SELECT COUNT(*) FROM roles WHERE name = $1", update.Role).Scan(&roleExists)
 		if err != nil || roleExists == 0 {
 			RespondWithError(w, http.StatusBadRequest, "Role does not exist")
 			return
 		}
 
-		_, err = db.Exec("UPDATE users SET role = ? WHERE id = ?", update.Role, userID)
+		_, err = db.Exec("UPDATE users SET role = $1 WHERE id = $2", update.Role, userID)
 		if err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "Failed to update user role: "+err.Error())
 			return
@@ -47,12 +46,71 @@ func UpdateUserRoleHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// Структура для создания/удаления роли
+func UpdateUserStatusHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userIDStr := chi.URLParam(r, "userID")
+		userID, err := strconv.Atoi(userIDStr)
+		if err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid User ID")
+			return
+		}
+
+		var update struct {
+			IsActive bool `json:"is_active"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+
+		_, err = db.Exec("UPDATE users SET is_active = $1 WHERE id = $2", update.IsActive, userID)
+		if err != nil {
+			log.Printf("Failed to update user status: %v", err)
+			RespondWithError(w, http.StatusInternalServerError, "Failed to update user status")
+			return
+		}
+
+		RespondWithJSON(w, http.StatusOK, map[string]string{"message": "User status updated successfully"})
+	}
+}
+
+func CreateUserHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Username  string `json:"username"`
+			FirstName string `json:"firstName"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid JSON")
+			return
+		}
+
+		if input.Username == "" {
+			RespondWithError(w, http.StatusBadRequest, "Username is required")
+			return
+		}
+
+		_, err := db.Exec(
+			"INSERT INTO users (username, first_name, role) VALUES ($1, $2, $3)",
+			input.Username,
+			input.FirstName,
+			"scout",
+		)
+		if err != nil {
+			log.Printf("DB error creating user: %v", err)
+			RespondWithError(w, http.StatusInternalServerError, "DB error creating user")
+			return
+		}
+
+		RespondWithJSON(w, http.StatusCreated, map[string]string{"message": "User created successfully"})
+	}
+}
+
 type Role struct {
 	Name string `json:"name"`
 }
 
-// Хэндлер для добавления новой роли
 func CreateRoleHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var newRole Role
@@ -61,7 +119,7 @@ func CreateRoleHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err := db.Exec("INSERT INTO roles (name) VALUES (?)", newRole.Name)
+		_, err := db.Exec("INSERT INTO roles (name) VALUES ($1)", newRole.Name)
 		if err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "Failed to create new role: "+err.Error())
 			return
@@ -71,7 +129,6 @@ func CreateRoleHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// Хэндлер для удаления роли
 func DeleteRoleHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var roleToDelete Role
@@ -80,13 +137,12 @@ func DeleteRoleHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Защита от удаления обязательных ролей
 		if roleToDelete.Name == "user" || roleToDelete.Name == "superadmin" {
 			RespondWithError(w, http.StatusBadRequest, "Cannot delete this role")
 			return
 		}
 
-		_, err := db.Exec("DELETE FROM roles WHERE name = ?", roleToDelete.Name)
+		_, err := db.Exec("DELETE FROM roles WHERE name = $1", roleToDelete.Name)
 		if err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "Failed to delete role: "+err.Error())
 			return
@@ -95,3 +151,36 @@ func DeleteRoleHandler(db *sql.DB) http.HandlerFunc {
 		RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Role deleted successfully"})
 	}
 }
+
+func DeleteUserHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userIDStr := chi.URLParam(r, "userID")
+		userID, err := strconv.Atoi(userIDStr)
+		if err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid User ID")
+			return
+		}
+
+		result, err := db.Exec("DELETE FROM users WHERE id = $1", userID)
+		if err != nil {
+			log.Printf("Failed to delete user: %v", err)
+			RespondWithError(w, http.StatusInternalServerError, "Failed to delete user")
+			return
+		}
+
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			log.Printf("Failed to get rows affected: %v", err)
+			RespondWithError(w, http.StatusInternalServerError, "Failed to check deletion status")
+			return
+		}
+
+		if rowsAffected == 0 {
+			RespondWithError(w, http.StatusNotFound, "User not found")
+			return
+		}
+
+		RespondWithJSON(w, http.StatusOK, map[string]string{"message": "User deleted successfully"})
+	}
+}
+
