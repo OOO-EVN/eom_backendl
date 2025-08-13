@@ -2,21 +2,19 @@ package handlers
 
 import (
 	"database/sql"
-	"encoding/json"
-	"log"
 	"net/http"
+	"log"
 )
 
-// UserAPIResponse - структура для ответа API, чтобы избежать конфликта с user_list.go
+// ✅ Исправлено: firstName → first_name
 type UserAPIResponse struct {
 	ID        int    `json:"id"`
 	Username  string `json:"username"`
-	FirstName string `json:"firstName"`
+	FirstName string `json:"first_name"`
 	Role      string `json:"role"`
 	IsActive  bool   `json:"is_active"`
 }
 
-// ListAdminUsersHandler возвращает список всех пользователей
 func ListAdminUsersHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rows, err := db.Query(`
@@ -26,7 +24,7 @@ func ListAdminUsersHandler(db *sql.DB) http.HandlerFunc {
 		`)
 		if err != nil {
 			log.Printf("Failed to fetch users: %v", err)
-			http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "Failed to fetch users")
 			return
 		}
 		defer rows.Close()
@@ -42,7 +40,7 @@ func ListAdminUsersHandler(db *sql.DB) http.HandlerFunc {
 			}
 			if err := rows.Scan(&u.ID, &u.Username, &u.FirstName, &u.Role, &u.IsActive); err != nil {
 				log.Printf("Scan error: %v", err)
-				http.Error(w, "Scan error", http.StatusInternalServerError)
+				RespondWithError(w, http.StatusInternalServerError, "Scan error")
 				return
 			}
 			users = append(users, UserAPIResponse{
@@ -56,16 +54,14 @@ func ListAdminUsersHandler(db *sql.DB) http.HandlerFunc {
 
 		if err := rows.Err(); err != nil {
 			log.Printf("Rows error: %v", err)
-			http.Error(w, "Rows error", http.StatusInternalServerError)
+			RespondWithError(w, http.StatusInternalServerError, "Rows error")
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(users)
+		RespondWithJSON(w, http.StatusOK, users)
 	}
 }
 
-// nullStringOrEmpty - вспомогательная функция
 func nullStringOrEmpty(ns sql.NullString) string {
 	if ns.Valid {
 		return ns.String

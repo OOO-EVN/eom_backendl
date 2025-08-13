@@ -1,8 +1,8 @@
-// main.go
 package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -35,11 +35,7 @@ func main() {
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
-
-	// 1. Проверяем JWT
 	router.Use(jwtauth.Verifier(jwtAuth))
-
-	// 2. Извлекаем user_id из JWT и кладём в контекст
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, _, err := jwtauth.FromContext(r.Context())
@@ -47,9 +43,7 @@ func main() {
 				next.ServeHTTP(w, r)
 				return
 			}
-
 			claims := token.PrivateClaims()
-
 			var userID int
 			if rawID, ok := claims["user_id"]; ok {
 				switch v := rawID.(type) {
@@ -63,45 +57,36 @@ func main() {
 					}
 				}
 			}
-
 			if userID != 0 {
-				// ✅ Исправлено: используем config.UserIDKey
 				ctx := context.WithValue(r.Context(), config.UserIDKey, userID)
 				r = r.WithContext(ctx)
 			}
-
 			next.ServeHTTP(w, r)
 		})
 	})
 
-	// Публичные маршруты
 	router.Post("/api/auth/register", authHandler.RegisterHandler)
 	router.Post("/api/auth/login", authHandler.LoginHandler)
 	router.Post("/api/auth/telegram", authHandler.TelegramAuthHandler)
 	router.Get("/auth_callback", authHandler.TelegramAuthCallbackHandler)
 	router.Get("/api/users", handlers.ListUsersHandler(database))
-
-	// Статика: фото
 	router.Handle("/uploads/*", http.StripPrefix("/uploads", http.FileServer(http.Dir("./uploads"))))
+	router.Get("/api/active-slots", handlers.GetActiveShiftsHandler(database))
 
-	// Защищённые маршруты
 	router.Group(func(r chi.Router) {
 		r.Use(jwtauth.Authenticator(jwtAuth))
-
-		// Общие маршруты
 		r.Get("/api/profile", profileHandler.GetProfile)
 		r.Post("/api/logout", authHandler.LogoutHandler)
-
-		// Маршруты для слотов и смен
+		r.Get("/api/admin/active-shifts", GetActiveShiftsForAll(database))
 		r.Post("/api/slot/start", handlers.StartSlotHandler(database))
 		r.Post("/api/slot/end", handlers.EndSlotHandler(database))
-		r.Get("/api/slot/active", handlers.GetActiveSlotHandler(database))
+		r.Get("/api/shifts/active", handlers.GetActiveShiftsHandler(database))
 		r.Get("/api/shifts", handlers.GetShiftsHandler(database))
-
-		// Только для superadmin
+		r.Get("/api/slots/positions", handlers.GetAvailablePositionsHandler(database))
+		r.Get("/api/slots/times", handlers.GetAvailableTimeSlotsHandler(database))
+		r.Get("/api/slots/zones", handlers.GetAvailableZonesHandler(database))
 		r.Group(func(r chi.Router) {
 			r.Use(superadminOnlyMiddleware(jwtService))
-
 			r.Get("/api/admin/users", handlers.ListAdminUsersHandler(database))
 			r.Patch("/api/admin/users/{userID}/role", handlers.UpdateUserRoleHandler(database))
 			r.Post("/api/admin/roles", handlers.CreateRoleHandler(database))
@@ -109,10 +94,10 @@ func main() {
 			r.Post("/api/admin/users", handlers.CreateUserHandler(database))
 			r.Patch("/api/admin/users/{userID}/status", handlers.UpdateUserStatusHandler(database))
 			r.Delete("/api/admin/users/{userID}", handlers.DeleteUserHandler(database))
+			r.Post("/api/admin/users/{userID}/end-shift", handlers.ForceEndShiftHandler(database))
 		})
 	})
 
-	// Создаём папки для загрузок
 	if err := ensureUploadDirs(); err != nil {
 		log.Fatalf("Failed to create upload directories: %v", err)
 	}
@@ -122,7 +107,6 @@ func main() {
 	log.Fatal(http.ListenAndServe(serverAddress, router))
 }
 
-// Промежуточное ПО: только для superadmin
 func superadminOnlyMiddleware(jwtService *services.JWTService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +129,6 @@ func superadminOnlyMiddleware(jwtService *services.JWTService) func(http.Handler
 	}
 }
 
-// Создаём папки
 func ensureUploadDirs() error {
 	dirs := []string{
 		"./uploads/selfies",
@@ -158,7 +141,6 @@ func ensureUploadDirs() error {
 	return nil
 }
 
-// Универсальные ответы
 func RespondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	response, _ := json.Marshal(payload)
 	w.Header().Set("Content-Type", "application/json")
@@ -168,4 +150,42 @@ func RespondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 
 func RespondWithError(w http.ResponseWriter, code int, message string) {
 	RespondWithJSON(w, code, map[string]string{"error": message})
+}
+
+func GetActiveShiftsForAll(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rows, err := db.Query(`
+			SELECT s.id, s.user_id, u.username, s.start_time, s.slot_time_range, s.position, s.zone, s.selfie_path
+			FROM slots s
+			JOIN users u ON s.user_id = u.id
+			WHERE s.end_time IS NULL
+		`)
+		if err != nil {
+			log.Printf("DB query error: %v", err)
+			RespondWithError(w, http.StatusInternalServerError, "Database error")
+			return
+		}
+		defer rows.Close()
+
+		var shifts []map[string]interface{}
+		for rows.Next() {
+			var id, userID int
+			var username, startTime, slotTimeRange, position, zone, selfie string
+			if err := rows.Scan(&id, &userID, &username, &startTime, &slotTimeRange, &position, &zone, &selfie); err != nil {
+				log.Printf("Error scanning row: %v", err)
+				continue
+			}
+			shifts = append(shifts, map[string]interface{}{
+				"id":              id,
+				"user_id":         userID,
+				"username":        username,
+				"start_time":      startTime,
+				"slot_time_range": slotTimeRange,
+				"position":        position,
+				"zone":            zone,
+				"selfie":          selfie,
+			})
+		}
+		RespondWithJSON(w, http.StatusOK, shifts)
+	}
 }
