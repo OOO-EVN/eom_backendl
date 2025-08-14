@@ -71,7 +71,7 @@ func main() {
 	router.Get("/auth_callback", authHandler.TelegramAuthCallbackHandler)
 	router.Get("/api/users", handlers.ListUsersHandler(database))
 	router.Handle("/uploads/*", http.StripPrefix("/uploads", http.FileServer(http.Dir("./uploads"))))
-	router.Get("/api/active-slots", handlers.GetActiveShiftsHandler(database))
+	router.Get("/api/active-slots", handlers.GetActiveShiftsHandler(database)) // Список всех активных смен
 
 	router.Group(func(r chi.Router) {
 		r.Use(jwtauth.Authenticator(jwtAuth))
@@ -80,7 +80,7 @@ func main() {
 		r.Get("/api/admin/active-shifts", GetActiveShiftsForAll(database))
 		r.Post("/api/slot/start", handlers.StartSlotHandler(database))
 		r.Post("/api/slot/end", handlers.EndSlotHandler(database))
-		r.Get("/api/shifts/active", handlers.GetActiveShiftsHandler(database))
+		r.Get("/api/shifts/active", handlers.GetUserActiveShiftHandler(database)) // Исправлено на GetUserActiveShiftHandler
 		r.Get("/api/shifts", handlers.GetShiftsHandler(database))
 		r.Get("/api/slots/positions", handlers.GetAvailablePositionsHandler(database))
 		r.Get("/api/slots/times", handlers.GetAvailableTimeSlotsHandler(database))

@@ -2,22 +2,20 @@ package handlers
 
 import (
     "database/sql"
+    "encoding/json"
     "fmt"
     "io"
     "log"
     "net/http"
     "os"
-    "encoding/json"
     "path/filepath"
     "time"
     "crypto/rand"
     _ "image/jpeg"
     _ "image/png"
-
     "github.com/evn/eom_backendl/config"
 )
 
-// generateSafeFilename создает уникальное и безопасное имя файла
 func generateSafeFilename(userID int, ext string) string {
     randomBytes := make([]byte, 8)
     if _, err := rand.Read(randomBytes); err != nil {
@@ -27,7 +25,6 @@ func generateSafeFilename(userID int, ext string) string {
     return fmt.Sprintf("selfie_%d_%s%s", userID, hash, ext)
 }
 
-// StartSlotHandler — начинает новую смену
 func StartSlotHandler(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         userID, ok := r.Context().Value(config.UserIDKey).(int)
@@ -129,7 +126,6 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
     }
 }
 
-// EndSlotHandler — завершает активную смену
 func EndSlotHandler(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         userID, ok := r.Context().Value(config.UserIDKey).(int)
@@ -172,7 +168,6 @@ func EndSlotHandler(db *sql.DB) http.HandlerFunc {
     }
 }
 
-// GetActiveShiftsHandler — возвращает все активные смены (для админов)
 func GetActiveShiftsHandler(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         w.Header().Set("Content-Type", "application/json")
@@ -232,7 +227,6 @@ func GetActiveShiftsHandler(db *sql.DB) http.HandlerFunc {
     }
 }
 
-// GetUserActiveShiftHandler — возвращает активную смену текущего пользователя
 func GetUserActiveShiftHandler(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         userID, ok := r.Context().Value(config.UserIDKey).(int)
@@ -286,7 +280,6 @@ func GetUserActiveShiftHandler(db *sql.DB) http.HandlerFunc {
     }
 }
 
-// GetShiftsHandler — возвращает историю завершённых смен
 func GetShiftsHandler(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         userID, ok := r.Context().Value(config.UserIDKey).(int)
@@ -339,7 +332,6 @@ func GetShiftsHandler(db *sql.DB) http.HandlerFunc {
     }
 }
 
-// GetAvailablePositionsHandler — возвращает список позиций
 func GetAvailablePositionsHandler(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         var positions []string
@@ -364,7 +356,6 @@ func GetAvailablePositionsHandler(db *sql.DB) http.HandlerFunc {
     }
 }
 
-// GetAvailableTimeSlotsHandler — возвращает доступные временные слоты
 func GetAvailableTimeSlotsHandler(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         var timeSlots []string
@@ -389,7 +380,6 @@ func GetAvailableTimeSlotsHandler(db *sql.DB) http.HandlerFunc {
     }
 }
 
-// GetAvailableZonesHandler — возвращает доступные зоны
 func GetAvailableZonesHandler(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         var zones []string
@@ -414,7 +404,6 @@ func GetAvailableZonesHandler(db *sql.DB) http.HandlerFunc {
     }
 }
 
-// formatDuration — форматирует секунды в строку "X ч Y мин"
 func formatDuration(seconds int) string {
     if seconds <= 0 {
         return "0 мин"
