@@ -1,3 +1,4 @@
+// handlers/profile_handler.go
 package handlers
 
 import (
@@ -43,11 +44,13 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		TelegramID sql.NullInt64
 		Role       string
 		AvatarURL  sql.NullString
+		// УБРАЛИ PhotoURL, так как столбца в БД нет
 	}
 
+	// ВЕРНУЛИ оригинальный запрос БЕЗ photo_url
 	err = h.db.QueryRow(`
-		SELECT id, username, first_name, telegram_id, role, avatar_url 
-		FROM users 
+		SELECT id, username, first_name, telegram_id, role, avatar_url
+		FROM users
 		WHERE id = ?`, userID).Scan(
 		&user.ID,
 		&user.Username,
@@ -55,25 +58,56 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		&user.TelegramID,
 		&user.Role,
 		&user.AvatarURL,
+		// УБРАЛИ &user.PhotoURL
 	)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
 			RespondWithError(w, http.StatusNotFound, "User not found")
 		} else {
+			// log.Printf("Database error in GetProfile: %v", err) // Опционально для отладки
 			RespondWithError(w, http.StatusInternalServerError, "Database error")
 		}
 		return
 	}
 
+	// --- Логика определения должности (position) на основе роли (role) ---
+	// Эта часть осталась ИЗМЕНЕННОЙ и исправленной
+	var position string
+	switch user.Role {
+	case "scout":
+		position = "Скаут"
+	case "supervisor":
+		position = "Супервайзер"
+	case "coordinator":
+		position = "Координатор"
+	case "superadmin":
+		position = "Суперадмин"
+	default:
+		// Значение по умолчанию
+		position = "Стажер"
+	}
+	// --- Конец логики определения должности ---
+
+	// --- Логика определения аватара ---
+	// Так как photo_url убран, используем только avatar_url
+	var finalAvatarURL interface{}
+	if user.AvatarURL.Valid && user.AvatarURL.String != "" {
+		finalAvatarURL = user.AvatarURL.String
+	} else {
+		finalAvatarURL = nil // или URL аватара по умолчанию
+	}
+	// --- Конец логики определения аватара ---
+
+	// Возвращаем ИСПРАВЛЕННЫЙ профиль
 	RespondWithJSON(w, http.StatusOK, map[string]interface{}{
 		"id":         user.ID,
 		"username":   user.Username,
 		"firstName":  user.FirstName,
 		"telegramId": nullInt64ToInterface(user.TelegramID),
-		"role":       user.Role,
-		"avatarUrl":  nullStringToInterface(user.AvatarURL),
-		"position":   "Скаут", // фиксированное значение
+		"role":       user.Role,       // Реальная роль
+		"avatarUrl":  finalAvatarURL,  // Выбранный аватар (пока только avatar_url)
+		"position":   position,        // Исправленная должность на основе роли
 	})
 }
 

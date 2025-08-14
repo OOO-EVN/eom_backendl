@@ -10,43 +10,53 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// ✅ Исправлено: ожидаем "first_name", а не "firstName"
 type CreateUserRequest struct {
 	Username  string `json:"username"`
 	FirstName string `json:"first_name"`
 }
 
 func CreateUserHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var input CreateUserRequest
+    return func(w http.ResponseWriter, r *http.Request) {
+        var input CreateUserRequest
 
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			RespondWithError(w, http.StatusBadRequest, "Invalid JSON")
-			return
-		}
+        if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+            RespondWithError(w, http.StatusBadRequest, "Invalid JSON")
+            return
+        }
 
-		if input.Username == "" {
-			RespondWithError(w, http.StatusBadRequest, "Username is required")
-			return
-		}
+        if input.Username == "" {
+            RespondWithError(w, http.StatusBadRequest, "Username is required")
+            return
+        }
 
-		_, err := db.Exec(
-			"INSERT INTO users (username, first_name, role) VALUES (?, ?, ?)",
-			input.Username,
-			input.FirstName,
-			"scout",
-		)
-		if err != nil {
-			log.Printf("DB error creating user: %v", err)
-			RespondWithError(w, http.StatusInternalServerError, "DB error creating user")
-			return
-		}
+        // Проверяем, существует ли пользователь с таким именем
+        var count int
+        err := db.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", input.Username).Scan(&count)
+        if err != nil {
+            log.Printf("DB error checking for existing user: %v", err)
+            RespondWithError(w, http.StatusInternalServerError, "DB error")
+            return
+        }
+        if count > 0 {
+            RespondWithError(w, http.StatusConflict, "Username already exists")
+            return
+        }
 
-		RespondWithJSON(w, http.StatusCreated, map[string]string{"message": "User created successfully"})
-	}
+        _, err = db.Exec(
+            "INSERT INTO users (username, first_name, role) VALUES (?, ?, ?)",
+            input.Username,
+            input.FirstName,
+            "scout",
+        )
+        if err != nil {
+            log.Printf("DB error creating user: %v", err)
+            RespondWithError(w, http.StatusInternalServerError, "DB error creating user")
+            return
+        }
+
+        RespondWithJSON(w, http.StatusCreated, map[string]string{"message": "User created successfully"})
+    }
 }
-
-// UpdateUserRoleHandler — без изменений
 func UpdateUserRoleHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userIDStr := chi.URLParam(r, "userID")
@@ -81,7 +91,6 @@ func UpdateUserRoleHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// UpdateUserStatusHandler — без изменений
 func UpdateUserStatusHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userIDStr := chi.URLParam(r, "userID")
@@ -110,7 +119,6 @@ func UpdateUserStatusHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// DeleteUserHandler — без изменений
 func DeleteUserHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userIDStr := chi.URLParam(r, "userID")
@@ -143,7 +151,6 @@ func DeleteUserHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// CreateRoleHandler — без изменений
 func CreateRoleHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var newRole struct {
@@ -164,7 +171,6 @@ func CreateRoleHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// DeleteRoleHandler — без изменений
 func DeleteRoleHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var roleToDelete struct {

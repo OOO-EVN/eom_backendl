@@ -1,3 +1,4 @@
+// main.go (обновленная часть)
 package main
 
 import (
@@ -25,12 +26,18 @@ func main() {
 	database := db.InitDB(cfg.DatabaseDSN)
 	defer database.Close()
 
+	// Создаем таблицу для карт, если её нет
+	if err := handlers.CreateMapsTable(database); err != nil {
+		log.Fatalf("Failed to create maps table: %v", err)
+	}
+
 	jwtAuth := jwtauth.New("HS256", []byte(cfg.JwtSecret), nil)
 	jwtService := services.NewJWTService(cfg.JwtSecret)
 	telegramAuthService := services.NewTelegramAuthService(cfg.TelegramBotToken)
 
 	authHandler := handlers.NewAuthHandler(database, jwtService, telegramAuthService)
 	profileHandler := handlers.NewProfileHandler(database)
+	mapHandler := handlers.NewMapHandler(database) // Добавляем обработчик карт
 
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
@@ -85,6 +92,12 @@ func main() {
 		r.Get("/api/slots/positions", handlers.GetAvailablePositionsHandler(database))
 		r.Get("/api/slots/times", handlers.GetAvailableTimeSlotsHandler(database))
 		r.Get("/api/slots/zones", handlers.GetAvailableZonesHandler(database))
+		
+		// Добавляем маршруты для работы с картами
+		r.Get("/api/admin/maps", mapHandler.GetMapsHandler)
+		r.Get("/api/admin/maps/{mapID}", mapHandler.GetMapByIDHandler)
+		r.Get("/api/admin/maps/files/{filename}", mapHandler.ServeMapFileHandler)
+		
 		r.Group(func(r chi.Router) {
 			r.Use(superadminOnlyMiddleware(jwtService))
 			r.Get("/api/admin/users", handlers.ListAdminUsersHandler(database))
@@ -95,6 +108,10 @@ func main() {
 			r.Patch("/api/admin/users/{userID}/status", handlers.UpdateUserStatusHandler(database))
 			r.Delete("/api/admin/users/{userID}", handlers.DeleteUserHandler(database))
 			r.Post("/api/admin/users/{userID}/end-shift", handlers.ForceEndShiftHandler(database))
+			
+			// Добавляем маршруты для загрузки и удаления карт (только для superadmin)
+			r.Post("/api/admin/maps/upload", mapHandler.UploadMapHandler)
+			r.Delete("/api/admin/maps/{mapID}", mapHandler.DeleteMapHandler)
 		})
 	})
 
@@ -132,6 +149,7 @@ func superadminOnlyMiddleware(jwtService *services.JWTService) func(http.Handler
 func ensureUploadDirs() error {
 	dirs := []string{
 		"./uploads/selfies",
+		"./uploads/maps", // Добавляем директорию для карт
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
