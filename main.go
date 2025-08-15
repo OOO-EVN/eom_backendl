@@ -1,4 +1,4 @@
-// main.go (обновленная часть)
+// main.go
 package main
 
 import (
@@ -26,9 +26,12 @@ func main() {
 	database := db.InitDB(cfg.DatabaseDSN)
 	defer database.Close()
 
-	// Создаем таблицу для карт, если её нет
+	// Создаем таблицы, если их нет
 	if err := handlers.CreateMapsTable(database); err != nil {
 		log.Fatalf("Failed to create maps table: %v", err)
+	}
+	if err := handlers.CreateTasksTable(database); err != nil {
+		log.Fatalf("Failed to create tasks table: %v", err)
 	}
 
 	jwtAuth := jwtauth.New("HS256", []byte(cfg.JwtSecret), nil)
@@ -37,12 +40,15 @@ func main() {
 
 	authHandler := handlers.NewAuthHandler(database, jwtService, telegramAuthService)
 	profileHandler := handlers.NewProfileHandler(database)
-	mapHandler := handlers.NewMapHandler(database) // Добавляем обработчик карт
+	mapHandler := handlers.NewMapHandler(database)
+	taskHandler := handlers.NewTaskHandler(database) // Новый обработчик задач
 
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
 	router.Use(jwtauth.Verifier(jwtAuth))
+
+	// Middleware для извлечения userID из JWT
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, _, err := jwtauth.FromContext(r.Context())
@@ -72,34 +78,51 @@ func main() {
 		})
 	})
 
+	// Публичные маршруты
 	router.Post("/api/auth/register", authHandler.RegisterHandler)
 	router.Post("/api/auth/login", authHandler.LoginHandler)
 	router.Post("/api/auth/telegram", authHandler.TelegramAuthHandler)
 	router.Get("/auth_callback", authHandler.TelegramAuthCallbackHandler)
 	router.Get("/api/users", handlers.ListUsersHandler(database))
 	router.Handle("/uploads/*", http.StripPrefix("/uploads", http.FileServer(http.Dir("./uploads"))))
-	router.Get("/api/active-slots", handlers.GetActiveShiftsHandler(database)) // Список всех активных смен
-
+	router.Get("/api/active-slots", handlers.GetActiveShiftsHandler(database))
+router.Post("/api/auth/refresh", authHandler.RefreshTokenHandler)
+	// Группа защищённых маршрутов
 	router.Group(func(r chi.Router) {
 		r.Use(jwtauth.Authenticator(jwtAuth))
+		
+		// Профиль и аутентификация
 		r.Get("/api/profile", profileHandler.GetProfile)
 		r.Post("/api/logout", authHandler.LogoutHandler)
+		r.Post("/api/auth/complete-registration", authHandler.CompleteRegistrationHandler)
+
+		// Смены
 		r.Get("/api/admin/active-shifts", GetActiveShiftsForAll(database))
 		r.Post("/api/slot/start", handlers.StartSlotHandler(database))
 		r.Post("/api/slot/end", handlers.EndSlotHandler(database))
-		r.Get("/api/shifts/active", handlers.GetUserActiveShiftHandler(database)) // Исправлено на GetUserActiveShiftHandler
+		r.Get("/api/shifts/active", handlers.GetUserActiveShiftHandler(database))
 		r.Get("/api/shifts", handlers.GetShiftsHandler(database))
+
+		// Доступные слоты
 		r.Get("/api/slots/positions", handlers.GetAvailablePositionsHandler(database))
 		r.Get("/api/slots/times", handlers.GetAvailableTimeSlotsHandler(database))
 		r.Get("/api/slots/zones", handlers.GetAvailableZonesHandler(database))
-		
-		// Добавляем маршруты для работы с картами
+
+		// Карты (только просмотр для всех админов)
 		r.Get("/api/admin/maps", mapHandler.GetMapsHandler)
 		r.Get("/api/admin/maps/{mapID}", mapHandler.GetMapByIDHandler)
 		r.Get("/api/admin/maps/files/{filename}", mapHandler.ServeMapFileHandler)
-		
+
+		// Задания (только просмотр для всех админов)
+		r.Get("/api/admin/tasks", taskHandler.GetTasksHandler)
+		r.Get("/api/admin/tasks/files/{filename}", taskHandler.ServeTaskFileHandler)
+r.Get("/api/my/tasks", taskHandler.GetMyTasksHandler) // ✅ Добавлен маршрут
+
+		// Только для superadmin
 		r.Group(func(r chi.Router) {
 			r.Use(superadminOnlyMiddleware(jwtService))
+
+			// Пользователи
 			r.Get("/api/admin/users", handlers.ListAdminUsersHandler(database))
 			r.Patch("/api/admin/users/{userID}/role", handlers.UpdateUserRoleHandler(database))
 			r.Post("/api/admin/roles", handlers.CreateRoleHandler(database))
@@ -108,22 +131,30 @@ func main() {
 			r.Patch("/api/admin/users/{userID}/status", handlers.UpdateUserStatusHandler(database))
 			r.Delete("/api/admin/users/{userID}", handlers.DeleteUserHandler(database))
 			r.Post("/api/admin/users/{userID}/end-shift", handlers.ForceEndShiftHandler(database))
-			
-			// Добавляем маршруты для загрузки и удаления карт (только для superadmin)
+
+			// Карты — загрузка и удаление
 			r.Post("/api/admin/maps/upload", mapHandler.UploadMapHandler)
 			r.Delete("/api/admin/maps/{mapID}", mapHandler.DeleteMapHandler)
+
+			// Задания — создание и удаление
+			r.Post("/api/admin/tasks", taskHandler.CreateTaskHandler)
+			r.Patch("/api/admin/tasks/{taskID}/status", taskHandler.UpdateTaskStatusHandler)
+			r.Delete("/api/admin/tasks/{taskID}", taskHandler.DeleteTaskHandler)
 		})
 	})
 
+	// Создаём директории для загрузки
 	if err := ensureUploadDirs(); err != nil {
 		log.Fatalf("Failed to create upload directories: %v", err)
 	}
 
+	// Запуск сервера
 	serverAddress := fmt.Sprintf(":%s", cfg.ServerPort)
 	log.Printf("Server starting on %s", serverAddress)
 	log.Fatal(http.ListenAndServe(serverAddress, router))
 }
 
+// Мидлварь: только для superadmin
 func superadminOnlyMiddleware(jwtService *services.JWTService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -146,10 +177,12 @@ func superadminOnlyMiddleware(jwtService *services.JWTService) func(http.Handler
 	}
 }
 
+// Создаём директории для загрузки файлов
 func ensureUploadDirs() error {
 	dirs := []string{
 		"./uploads/selfies",
-		"./uploads/maps", // Добавляем директорию для карт
+		"./uploads/maps",
+		"./uploads/tasks",
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -159,6 +192,7 @@ func ensureUploadDirs() error {
 	return nil
 }
 
+// Универсальный JSON-ответ
 func RespondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	response, _ := json.Marshal(payload)
 	w.Header().Set("Content-Type", "application/json")
@@ -166,10 +200,12 @@ func RespondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Write(response)
 }
 
+// Ответ с ошибкой
 func RespondWithError(w http.ResponseWriter, code int, message string) {
 	RespondWithJSON(w, code, map[string]string{"error": message})
 }
 
+// Обработчик всех активных смен (для админов)
 func GetActiveShiftsForAll(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rows, err := db.Query(`

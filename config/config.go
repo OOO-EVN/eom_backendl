@@ -3,7 +3,11 @@ package config
 import (
     "os"
 )
-
+type contextKey string
+const (
+	UserIDKey contextKey = "user_id"
+	// ... другие константы
+)
 // Config хранит все конфигурации приложения
 type Config struct {
     DatabaseDSN string
