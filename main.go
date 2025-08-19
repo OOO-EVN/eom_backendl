@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,7 +12,7 @@ import (
 
 	"github.com/evn/eom_backendl/config"
 	"github.com/evn/eom_backendl/db"
-	"github.com/evn/eom_backendl/handlers"
+	"github.com/evn/eom_backendl/handlers" // Убедитесь, что handlers импортирован
 	"github.com/evn/eom_backendl/services"
 
 	"github.com/go-chi/chi/v5"
@@ -42,6 +41,10 @@ func main() {
 	profileHandler := handlers.NewProfileHandler(database)
 	mapHandler := handlers.NewMapHandler(database)
 	taskHandler := handlers.NewTaskHandler(database) // Новый обработчик задач
+
+	// === ДОБАВЛЕНО: Создание обработчика статистики самокатов ===
+	// Убедитесь, что путь к базе данных бота корректен
+	scooterStatsHandler := handlers.NewScooterStatsHandler("/root/tg_bot/Sharing/scooters.db")
 
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
@@ -86,11 +89,12 @@ func main() {
 	router.Get("/api/users", handlers.ListUsersHandler(database))
 	router.Handle("/uploads/*", http.StripPrefix("/uploads", http.FileServer(http.Dir("./uploads"))))
 	router.Get("/api/active-slots", handlers.GetActiveShiftsHandler(database))
-router.Post("/api/auth/refresh", authHandler.RefreshTokenHandler)
+	router.Post("/api/auth/refresh", authHandler.RefreshTokenHandler)
+
 	// Группа защищённых маршрутов
 	router.Group(func(r chi.Router) {
 		r.Use(jwtauth.Authenticator(jwtAuth))
-		
+
 		// Профиль и аутентификация
 		r.Get("/api/profile", profileHandler.GetProfile)
 		r.Post("/api/logout", authHandler.LogoutHandler)
@@ -108,6 +112,9 @@ router.Post("/api/auth/refresh", authHandler.RefreshTokenHandler)
 		r.Get("/api/slots/times", handlers.GetAvailableTimeSlotsHandler(database))
 		r.Get("/api/slots/zones", handlers.GetAvailableZonesHandler(database))
 
+		// === ДОБАВЛЕНО: Маршрут для статистики самокатов ===
+		r.Get("/api/scooter-stats/shift", scooterStatsHandler.GetShiftStatsHandler)
+
 		// Карты (только просмотр для всех админов)
 		r.Get("/api/admin/maps", mapHandler.GetMapsHandler)
 		r.Get("/api/admin/maps/{mapID}", mapHandler.GetMapByIDHandler)
@@ -116,7 +123,7 @@ router.Post("/api/auth/refresh", authHandler.RefreshTokenHandler)
 		// Задания (только просмотр для всех админов)
 		r.Get("/api/admin/tasks", taskHandler.GetTasksHandler)
 		r.Get("/api/admin/tasks/files/{filename}", taskHandler.ServeTaskFileHandler)
-r.Get("/api/my/tasks", taskHandler.GetMyTasksHandler) // ✅ Добавлен маршрут
+		r.Get("/api/my/tasks", taskHandler.GetMyTasksHandler) // ✅ Добавлен маршрут
 
 		// Только для superadmin
 		r.Group(func(r chi.Router) {
@@ -160,16 +167,19 @@ func superadminOnlyMiddleware(jwtService *services.JWTService) func(http.Handler
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, _, err := jwtauth.FromContext(r.Context())
 			if err != nil {
-				RespondWithError(w, http.StatusUnauthorized, "Invalid token")
+				// Используем handlers.RespondWithError
+				handlers.RespondWithError(w, http.StatusUnauthorized, "Invalid token")
 				return
 			}
 			claims, err := token.AsMap(r.Context())
 			if err != nil {
-				RespondWithError(w, http.StatusUnauthorized, "Invalid claims")
+				// Используем handlers.RespondWithError
+				handlers.RespondWithError(w, http.StatusUnauthorized, "Invalid claims")
 				return
 			}
 			if claims["role"] != "superadmin" {
-				RespondWithError(w, http.StatusForbidden, "Access denied")
+				// Используем handlers.RespondWithError
+				handlers.RespondWithError(w, http.StatusForbidden, "Access denied")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -192,18 +202,26 @@ func ensureUploadDirs() error {
 	return nil
 }
 
-// Универсальный JSON-ответ
-func RespondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
-	response, _ := json.Marshal(payload)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	w.Write(response)
-}
+// Создаём директории для загрузки файлов
+// func ensureUploadDirs() error {
+// 	dirs := []string{
+// 		"./uploads/selfies",
+// 		"./uploads/maps",
+// 		"./uploads/tasks",
+// 	}
+// 	for _, dir := range dirs {
+// 		if err := os.MkdirAll(dir, 0755); err != nil {
+// 			return err
+// 		}
+// 	}
+// 	return nil
+// }
 
+// Универсальный JSON-ответ
 // Ответ с ошибкой
-func RespondWithError(w http.ResponseWriter, code int, message string) {
-	RespondWithJSON(w, code, map[string]string{"error": message})
-}
+// УДАЛЕНО: Эти функции теперь находятся в handlers/response.go
+// func RespondWithJSON(w http.ResponseWriter, code int, payload interface{}) { ... }
+// func RespondWithError(w http.ResponseWriter, code int, message string) { ... }
 
 // Обработчик всех активных смен (для админов)
 func GetActiveShiftsForAll(db *sql.DB) http.HandlerFunc {
@@ -216,7 +234,8 @@ func GetActiveShiftsForAll(db *sql.DB) http.HandlerFunc {
 		`)
 		if err != nil {
 			log.Printf("DB query error: %v", err)
-			RespondWithError(w, http.StatusInternalServerError, "Database error")
+			// Используем handlers.RespondWithError
+			handlers.RespondWithError(w, http.StatusInternalServerError, "Database error")
 			return
 		}
 		defer rows.Close()
@@ -240,6 +259,7 @@ func GetActiveShiftsForAll(db *sql.DB) http.HandlerFunc {
 				"selfie":          selfie,
 			})
 		}
-		RespondWithJSON(w, http.StatusOK, shifts)
+		// Используем handlers.RespondWithJSON
+		handlers.RespondWithJSON(w, http.StatusOK, shifts)
 	}
 }
