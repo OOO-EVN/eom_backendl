@@ -5,7 +5,6 @@ import (
     "encoding/json"
     "fmt"
     "io"
-    "log"
     "net/http"
     "os"
     "path/filepath"
@@ -36,12 +35,18 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
         var activeCount int
         err := db.QueryRow("SELECT COUNT(*) FROM slots WHERE user_id = ? AND end_time IS NULL", userID).Scan(&activeCount)
         if err != nil {
-            log.Printf("DB error checking active slot: %v", err)
             RespondWithError(w, http.StatusInternalServerError, "Database error")
             return
         }
         if activeCount > 0 {
             RespondWithError(w, http.StatusBadRequest, "Slot already active")
+            return
+        }
+
+        var position string
+        err = db.QueryRow("SELECT position FROM users WHERE id = ?", userID).Scan(&position)
+        if err != nil {
+            RespondWithError(w, http.StatusInternalServerError, "Failed to load position")
             return
         }
 
@@ -51,9 +56,8 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
         }
 
         slotTimeRange := r.FormValue("slot_time_range")
-        position := r.FormValue("position")
         zone := r.FormValue("zone")
-        if slotTimeRange == "" || position == "" || zone == "" {
+        if slotTimeRange == "" || zone == "" {
             RespondWithError(w, http.StatusBadRequest, "Missing required fields")
             return
         }
@@ -77,7 +81,7 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
             RespondWithError(w, http.StatusBadRequest, "Only JPEG and PNG images allowed")
             return
         }
-        
+
         file.Seek(0, 0)
 
         ext := ".jpg"
@@ -107,21 +111,27 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
             return
         }
 
-        _, err = db.Exec(`
+        result, err := db.Exec(`
             INSERT INTO slots (user_id, start_time, slot_time_range, position, zone, selfie_path)
             VALUES (?, ?, ?, ?, ?, ?)
         `, userID, time.Now(), slotTimeRange, position, zone, "/uploads/selfies/"+filename)
 
         if err != nil {
             os.Remove(filepath)
-            log.Printf("DB insert error: %v", err)
             RespondWithError(w, http.StatusInternalServerError, "Database error")
             return
         }
 
+        slotID, _ := result.LastInsertId()
         RespondWithJSON(w, http.StatusCreated, map[string]interface{}{
-            "message": "Slot started successfully",
-            "selfie":  "/uploads/selfies/" + filename,
+            "message":           "Slot started successfully",
+            "selfie":            "/uploads/selfies/" + filename,
+            "id":                slotID,
+            "user_id":           userID,
+            "slot_time_range":   slotTimeRange,
+            "position":          position,
+            "zone":              zone,
+            "start_time":        time.Now().Format(time.RFC3339),
         })
     }
 }
@@ -143,7 +153,6 @@ func EndSlotHandler(db *sql.DB) http.HandlerFunc {
             RespondWithError(w, http.StatusBadRequest, "No active slot found")
             return
         } else if err != nil {
-            log.Printf("DB error: %v", err)
             RespondWithError(w, http.StatusInternalServerError, "Database error")
             return
         }
@@ -156,7 +165,6 @@ func EndSlotHandler(db *sql.DB) http.HandlerFunc {
         `, endTime, duration, slotID)
 
         if err != nil {
-            log.Printf("Failed to update slot: %v", err)
             RespondWithError(w, http.StatusInternalServerError, "Database error")
             return
         }
@@ -187,7 +195,6 @@ func GetActiveShiftsHandler(db *sql.DB) http.HandlerFunc {
             WHERE s.end_time IS NULL
         `)
         if err != nil {
-            log.Printf("DB error in GetActiveShiftsHandler: %v", err)
             http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
             return
         }
@@ -201,7 +208,6 @@ func GetActiveShiftsHandler(db *sql.DB) http.HandlerFunc {
             var startTime time.Time
 
             if err := rows.Scan(&id, &userID, &username, &slotTimeRange, &position, &zone, &startTime, &selfiePath); err != nil {
-                log.Printf("Error scanning row in GetActiveShiftsHandler: %v", err)
                 http.Error(w, `{"error":"Error processing data"}`, http.StatusInternalServerError)
                 return
             }
@@ -259,7 +265,6 @@ func GetUserActiveShiftHandler(db *sql.DB) http.HandlerFunc {
             w.Write([]byte("null"))
             return
         } else if err != nil {
-            log.Printf("DB error in GetUserActiveShiftHandler: %v", err)
             RespondWithError(w, http.StatusInternalServerError, "Database error")
             return
         }
@@ -271,7 +276,7 @@ func GetUserActiveShiftHandler(db *sql.DB) http.HandlerFunc {
             "slot_time_range": slotTimeRange,
             "position":        position,
             "zone":            zone,
-            "start_time":      startTime,
+            "start_time":      startTime.Format(time.RFC3339),
             "is_active":       true,
             "selfie":          selfiePath,
         }
@@ -296,7 +301,6 @@ func GetShiftsHandler(db *sql.DB) http.HandlerFunc {
             ORDER BY start_time DESC
         `, userID)
         if err != nil {
-            log.Printf("Error querying shifts: %v", err)
             RespondWithError(w, http.StatusInternalServerError, "Failed to query shifts")
             return
         }
@@ -309,7 +313,6 @@ func GetShiftsHandler(db *sql.DB) http.HandlerFunc {
             var workedDuration sql.NullInt64
 
             if err := rows.Scan(&startTime, &endTime, &slotTimeRange, &position, &zone, &workedDuration); err != nil {
-                log.Printf("Error scanning shift: %v", err)
                 continue
             }
 
@@ -334,25 +337,20 @@ func GetShiftsHandler(db *sql.DB) http.HandlerFunc {
 
 func GetAvailablePositionsHandler(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
-        var positions []string
-        rows, err := db.Query("SELECT position FROM available_positions")
-        if err != nil {
-            log.Printf("Error querying positions: %v", err)
-            RespondWithError(w, http.StatusInternalServerError, "Failed to load positions")
+        userID, ok := r.Context().Value(config.UserIDKey).(int)
+        if !ok {
+            RespondWithError(w, http.StatusUnauthorized, "User not authenticated")
             return
         }
-        defer rows.Close()
 
-        for rows.Next() {
-            var position string
-            if err := rows.Scan(&position); err != nil {
-                log.Printf("Error scanning position: %v", err)
-                continue
-            }
-            positions = append(positions, position)
+        var position string
+        err := db.QueryRow("SELECT position FROM users WHERE id = ?", userID).Scan(&position)
+        if err != nil {
+            RespondWithError(w, http.StatusInternalServerError, "Failed to load position")
+            return
         }
 
-        RespondWithJSON(w, http.StatusOK, positions)
+        RespondWithJSON(w, http.StatusOK, []string{position})
     }
 }
 
@@ -361,7 +359,6 @@ func GetAvailableTimeSlotsHandler(db *sql.DB) http.HandlerFunc {
         var timeSlots []string
         rows, err := db.Query("SELECT slot_time_range FROM available_time_slots")
         if err != nil {
-            log.Printf("Error querying time slots: %v", err)
             RespondWithError(w, http.StatusInternalServerError, "Failed to load time slots")
             return
         }
@@ -370,37 +367,12 @@ func GetAvailableTimeSlotsHandler(db *sql.DB) http.HandlerFunc {
         for rows.Next() {
             var timeSlot string
             if err := rows.Scan(&timeSlot); err != nil {
-                log.Printf("Error scanning time slot: %v", err)
                 continue
             }
             timeSlots = append(timeSlots, timeSlot)
         }
 
         RespondWithJSON(w, http.StatusOK, timeSlots)
-    }
-}
-
-func GetAvailableZonesHandler(db *sql.DB) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        var zones []string
-        rows, err := db.Query("SELECT zone FROM available_zones")
-        if err != nil {
-            log.Printf("Error querying zones: %v", err)
-            RespondWithError(w, http.StatusInternalServerError, "Failed to load zones")
-            return
-        }
-        defer rows.Close()
-
-        for rows.Next() {
-            var zone string
-            if err := rows.Scan(&zone); err != nil {
-                log.Printf("Error scanning zone: %v", err)
-                continue
-            }
-            zones = append(zones, zone)
-        }
-
-        RespondWithJSON(w, http.StatusOK, zones)
     }
 }
 

@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"net/http"
 	"log"
+    "github.com/evn/eom_backendl/services" // ✅ Добавь эту строку
+
 )
 
 // ✅ Исправлено: firstName → first_name
@@ -67,4 +69,14 @@ func nullStringOrEmpty(ns sql.NullString) string {
 		return ns.String
 	}
 	return ""
+}
+func GetOnlineUsersHandler(store *services.RedisStore) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        users, err := store.GetAllLocations()
+        if err != nil {
+            RespondWithError(w, http.StatusInternalServerError, "DB error")
+            return
+        }
+        RespondWithJSON(w, http.StatusOK, users)
+    }
 }

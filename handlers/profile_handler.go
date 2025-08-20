@@ -44,12 +44,12 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		TelegramID sql.NullInt64
 		Role       string
 		AvatarURL  sql.NullString
-		// УБРАЛИ PhotoURL, так как столбца в БД нет
+		Zone       sql.NullString // Добавлено: поле для зоны
 	}
 
-	// ВЕРНУЛИ оригинальный запрос БЕЗ photo_url
+	// Обновленный запрос: ДОБАВЛЕНО поле `zone`
 	err = h.db.QueryRow(`
-		SELECT id, username, first_name, telegram_id, role, avatar_url
+		SELECT id, username, first_name, telegram_id, role, avatar_url, zone
 		FROM users
 		WHERE id = ?`, userID).Scan(
 		&user.ID,
@@ -58,21 +58,19 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		&user.TelegramID,
 		&user.Role,
 		&user.AvatarURL,
-		// УБРАЛИ &user.PhotoURL
+		&user.Zone, // Добавлено
 	)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
 			RespondWithError(w, http.StatusNotFound, "User not found")
 		} else {
-			// log.Printf("Database error in GetProfile: %v", err) // Опционально для отладки
 			RespondWithError(w, http.StatusInternalServerError, "Database error")
 		}
 		return
 	}
 
 	// --- Логика определения должности (position) на основе роли (role) ---
-	// Эта часть осталась ИЗМЕНЕННОЙ и исправленной
 	var position string
 	switch user.Role {
 	case "scout":
@@ -83,35 +81,42 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		position = "Координатор"
 	case "superadmin":
 		position = "Суперадмин"
+	case "courier": // Добавьте, если у вас есть роль "courier"
+		position = "Курьер"
 	default:
-		// Значение по умолчанию
 		position = "Стажер"
 	}
-	// --- Конец логики определения должности ---
 
 	// --- Логика определения аватара ---
-	// Так как photo_url убран, используем только avatar_url
 	var finalAvatarURL interface{}
 	if user.AvatarURL.Valid && user.AvatarURL.String != "" {
 		finalAvatarURL = user.AvatarURL.String
 	} else {
-		finalAvatarURL = nil // или URL аватара по умолчанию
+		finalAvatarURL = nil
 	}
-	// --- Конец логики определения аватара ---
 
-	// Возвращаем ИСПРАВЛЕННЫЙ профиль
+	// --- Логика определения зоны по умолчанию ---
+	var finalZone interface{}
+	if user.Zone.Valid && user.Zone.String != "" {
+		finalZone = user.Zone.String
+	} else {
+		finalZone = "Центр" // Значение по умолчанию
+	}
+
+	// Возвращаем профиль с полем `zone`
 	RespondWithJSON(w, http.StatusOK, map[string]interface{}{
 		"id":         user.ID,
 		"username":   user.Username,
 		"firstName":  user.FirstName,
 		"telegramId": nullInt64ToInterface(user.TelegramID),
-		"role":       user.Role,       // Реальная роль
-		"avatarUrl":  finalAvatarURL,  // Выбранный аватар (пока только avatar_url)
-		"position":   position,        // Исправленная должность на основе роли
+		"role":       user.Role,
+		"avatarUrl":  finalAvatarURL,
+		"position":   position,
+		"zone":       finalZone, // Добавлено в ответ
 	})
 }
 
-// Вспомогательные функции для обработки sql.Null*
+// Вспомогательные функции
 func nullInt64ToInterface(n sql.NullInt64) interface{} {
 	if n.Valid {
 		return n.Int64
