@@ -8,6 +8,7 @@ import (
     "net/http"
     "os"
     "path/filepath"
+    "strings"
     "time"
     "crypto/rand"
     _ "image/jpeg"
@@ -43,11 +44,27 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
             return
         }
 
+        // Получаем роль пользователя как позицию
         var position string
-        err = db.QueryRow("SELECT position FROM users WHERE id = ?", userID).Scan(&position)
+        err = db.QueryRow("SELECT role FROM users WHERE id = ?", userID).Scan(&position)
         if err != nil {
-            RespondWithError(w, http.StatusInternalServerError, "Failed to load position")
-            return
+            // Если роль не найдена, используем значение по умолчанию
+            position = "user"
+        }
+        
+        // Преобразуем роль в читаемую позицию
+        positionMap := map[string]string{
+            "superadmin":   "Суперадмин",
+            "admin":        "Администратор",
+            "coordinator":  "Координатор",
+            "scout":        "Скаут",
+            "user":         "Пользователь",
+        }
+        
+        if readablePosition, exists := positionMap[position]; exists {
+            position = readablePosition
+        } else {
+            position = "Сотрудник"
         }
 
         if err := r.ParseMultipartForm(5 << 20); err != nil {
@@ -60,6 +77,37 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
         if slotTimeRange == "" || zone == "" {
             RespondWithError(w, http.StatusBadRequest, "Missing required fields")
             return
+        }
+
+        // Обработка зоны - если это JSON, извлекаем только имя
+        if len(zone) > 0 && zone[0] == '{' {
+            // Извлекаем имя зоны из JSON
+            nameStart := strings.Index(zone, "name:")
+            if nameStart != -1 {
+                nameStart += 5
+                for nameStart < len(zone) && (zone[nameStart] == ' ' || zone[nameStart] == '\t') {
+                    nameStart++
+                }
+                var zoneName string
+                if nameStart < len(zone) {
+                    if zone[nameStart] == '"' {
+                        nameStart++
+                        nameEnd := strings.Index(zone[nameStart:], "\"")
+                        if nameEnd != -1 {
+                            zoneName = zone[nameStart : nameStart+nameEnd]
+                        }
+                    } else {
+                    nameEnd := nameStart
+                        for nameEnd < len(zone) && zone[nameEnd] != '}' && zone[nameEnd] != ',' {
+                            nameEnd++
+                        }
+                        zoneName = strings.TrimSpace(zone[nameStart:nameEnd])
+                    }
+                }
+                if zoneName != "" {
+                    zone = zoneName
+                }
+            }
         }
 
         file, _, err := r.FormFile("selfie")
@@ -118,11 +166,16 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
 
         if err != nil {
             os.Remove(filepath)
-            RespondWithError(w, http.StatusInternalServerError, "Database error")
+            RespondWithError(w, http.StatusInternalServerError, "Database error: "+err.Error())
             return
         }
 
-        slotID, _ := result.LastInsertId()
+        slotID, err := result.LastInsertId()
+        if err != nil {
+            RespondWithError(w, http.StatusInternalServerError, "Failed to get slot ID")
+            return
+        }
+
         RespondWithJSON(w, http.StatusCreated, map[string]interface{}{
             "message":           "Slot started successfully",
             "selfie":            "/uploads/selfies/" + filename,
@@ -343,11 +396,25 @@ func GetAvailablePositionsHandler(db *sql.DB) http.HandlerFunc {
             return
         }
 
-        var position string
-        err := db.QueryRow("SELECT position FROM users WHERE id = ?", userID).Scan(&position)
+        var role string
+        err := db.QueryRow("SELECT role FROM users WHERE id = ?", userID).Scan(&role)
         if err != nil {
-            RespondWithError(w, http.StatusInternalServerError, "Failed to load position")
+            RespondWithError(w, http.StatusInternalServerError, "Failed to load user role")
             return
+        }
+
+        // Преобразуем роль в читаемую позицию
+        positionMap := map[string]string{
+            "superadmin":   "Суперадмин",
+            "admin":        "Администратор",
+            "coordinator":  "Координатор",
+            "scout":        "Скаут",
+            "user":         "Пользователь",
+        }
+        
+        position := "Сотрудник"
+        if readablePosition, exists := positionMap[role]; exists {
+            position = readablePosition
         }
 
         RespondWithJSON(w, http.StatusOK, []string{position})
@@ -387,3 +454,15 @@ func formatDuration(seconds int) string {
     }
     return fmt.Sprintf("%d мин", mins)
 }
+
+/*func RespondWithError(w http.ResponseWriter, code int, message string) {
+  //  w.Header().Set("Content-Type", "application/json")
+   // w.WriteHeader(code)
+    ///json.NewEncoder(w).Encode(map[string]string{"error": message})
+//}
+
+/func RespondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(code)
+    json.NewEncoder(w).Encode(payload)
+}*/

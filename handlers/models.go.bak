@@ -1,9 +1,0 @@
-// handlers/models.go
-//package handlers
-
-//type GenerateShiftsRequest struct {
-//	Date         string `json:"date"`
-//	MorningCount int    `json:"morning_count"`
-//	EveningCount int    `json:"evening_count"`
-//	ScoutIDs     []int  `json:"scout_ids"`
-//}
