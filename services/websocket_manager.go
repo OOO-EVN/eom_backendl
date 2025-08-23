@@ -1,14 +1,14 @@
-// services/websocket_manager.go
 package services
 
 import (
+    "database/sql"
     "encoding/json"
     "log"
     "sync"
     "time"
 
-    "github.com/gorilla/websocket"
     "github.com/evn/eom_backendl/models"
+    "github.com/gorilla/websocket"
 )
 
 type WebSocketManager struct {
@@ -17,18 +17,20 @@ type WebSocketManager struct {
     register   chan *Client
     unregister chan *Client
     Store      *RedisStore
+    db         *sql.DB
     mu         sync.RWMutex
 }
 
-func NewWebSocketManager(store *RedisStore) *WebSocketManager {
+func NewWebSocketManager(store *RedisStore, db *sql.DB) *WebSocketManager {
     manager := &WebSocketManager{
         clients:    make(map[*Client]bool),
         broadcast:  make(chan []byte),
         register:   make(chan *Client),
         unregister: make(chan *Client),
         Store:      store,
+        db:         db,
     }
-    go manager.Run() // ✅ Запускаем экспортируемый метод
+    go manager.Run()
     return manager
 }
 
@@ -44,23 +46,39 @@ func (m *WebSocketManager) Broadcast(message []byte) {
     m.broadcast <- message
 }
 
-// ✅ Один единственный Run() — экспортируемый и запускаемый
+func (m *WebSocketManager) BroadcastActiveShifts() {
+    activeShifts, err := m.Store.GetAllActiveShifts(m.db)
+    if err != nil {
+        log.Printf("Failed to get active shifts: %v", err)
+        return
+    }
+    data, _ := json.Marshal(map[string]interface{}{
+        "type":      "active_shifts",
+        "shifts":    activeShifts,
+        "timestamp": time.Now().UTC(),
+    })
+    m.Broadcast(data)
+}
+
 func (m *WebSocketManager) Run() {
+    ticker := time.NewTicker(30 * time.Second)
+    defer ticker.Stop()
     for {
         select {
         case client := <-m.register:
             m.mu.Lock()
             m.clients[client] = true
             m.mu.Unlock()
-            m.BroadcastOnlineUsers()
+            m.BroadcastActiveShifts()
         case client := <-m.unregister:
             m.mu.Lock()
             if _, ok := m.clients[client]; ok {
                 delete(m.clients, client)
                 close(client.Send)
+                m.Store.DeleteLocation(client.UserID)
             }
             m.mu.Unlock()
-            m.BroadcastOnlineUsers()
+            m.BroadcastActiveShifts()
         case message := <-m.broadcast:
             m.mu.RLock()
             for client := range m.clients {
@@ -72,48 +90,37 @@ func (m *WebSocketManager) Run() {
                 }
             }
             m.mu.RUnlock()
+        case <-ticker.C:
+            m.BroadcastActiveShifts()
         }
     }
 }
 
-func (m *WebSocketManager) BroadcastOnlineUsers() {
-    locations, err := m.Store.GetAllLocations()
-    if err != nil {
-        log.Printf("Failed to get locations: %v", err)
-        return
-    }
-
-    data, _ := json.Marshal(map[string]interface{}{
-        "type":      "online_users",
-        "users":     locations,
-        "timestamp": time.Now().UTC(),
-    })
-    m.Broadcast(data)
-}
-
-// ✅ Методы для работы с клиентом
 func (m *WebSocketManager) ReadPump(client *Client) {
     defer func() {
         m.Unregister(client)
         client.Conn.Close()
     }()
-
     for {
         _, message, err := client.Conn.ReadMessage()
         if err != nil {
+            if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+                log.Printf("error: %v", err)
+            }
             break
         }
-
         var loc models.Location
         if err := json.Unmarshal(message, &loc); err != nil {
+            log.Printf("Error unmarshaling location: %v", err)
             continue
         }
-
         loc.UserID = client.UserID
         loc.Timestamp = time.Now().UTC()
-
-        m.Store.SaveLocation(&loc)
-        m.BroadcastOnlineUsers()
+        if err := m.Store.SaveLocation(&loc); err != nil {
+            log.Printf("Error saving location: %v", err)
+            continue
+        }
+        m.BroadcastActiveShifts()
     }
 }
 
@@ -123,7 +130,6 @@ func (m *WebSocketManager) WritePump(client *Client) {
         ticker.Stop()
         client.Conn.Close()
     }()
-
     for {
         select {
         case message, ok := <-client.Send:
@@ -131,9 +137,14 @@ func (m *WebSocketManager) WritePump(client *Client) {
                 client.Conn.WriteMessage(websocket.CloseMessage, []byte{})
                 return
             }
-            client.Conn.WriteMessage(websocket.TextMessage, message)
+            if err := client.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
+                log.Printf("Error writing message: %v", err)
+                return
+            }
         case <-ticker.C:
-            client.Conn.WriteMessage(websocket.PingMessage, nil)
+            if err := client.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+                return
+            }
         }
     }
 }

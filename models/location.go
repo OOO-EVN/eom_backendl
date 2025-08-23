@@ -1,6 +1,9 @@
+// models/location.go
 package models
 
-import "time"
+import (
+    "time"
+)
 
 type Location struct {
     UserID    int       `json:"user_id"`
