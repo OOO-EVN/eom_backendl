@@ -22,12 +22,20 @@ func main() {
     cfg := config.NewConfig()
     database := db.InitDB(cfg.DatabaseDSN)
     defer database.Close()
+    
+    // Создаем необходимые таблицы
     if err := handlers.CreateMapsTable(database); err != nil {
         log.Fatalf("Failed to create maps table: %v", err)
     }
     if err := handlers.CreateTasksTable(database); err != nil {
         log.Fatalf("Failed to create tasks table: %v", err)
     }
+    
+    // Создаем таблицу для версий приложения
+    if err := createAppVersionsTable(database); err != nil {
+        log.Fatalf("Failed to create app versions table: %v", err)
+    }
+    
     jwtAuth := jwtauth.New("HS256", []byte(cfg.JwtSecret), nil)
     jwtService := services.NewJWTService(cfg.JwtSecret)
     telegramAuthService := services.NewTelegramAuthService(cfg.TelegramBotToken)
@@ -36,11 +44,16 @@ func main() {
     redisStore := services.NewRedisStore(redisClient)
     wsManager := services.NewWebSocketManager(redisStore, database)
     go wsManager.Run()
+    
     authHandler := handlers.NewAuthHandler(database, jwtService, telegramAuthService)
     profileHandler := handlers.NewProfileHandler(database)
     mapHandler := handlers.NewMapHandler(database)
     taskHandler := handlers.NewTaskHandler(database)
     scooterStatsHandler := handlers.NewScooterStatsHandler("/root/tg_bot/Sharing/scooters.db")
+    
+    // Инициализируем обработчик версий приложения
+    appVersionHandler := handlers.NewAppVersionHandler(database)
+    
     router := chi.NewRouter()
     router.Use(middleware.Logger)
     router.Use(middleware.Recoverer)
@@ -73,6 +86,8 @@ func main() {
             next.ServeHTTP(w, r)
         })
     })
+    
+    // Публичные маршруты
     router.Post("/api/auth/register", authHandler.RegisterHandler)
     router.Post("/api/auth/login", authHandler.LoginHandler)
     router.Post("/api/auth/telegram", authHandler.TelegramAuthHandler)
@@ -82,11 +97,17 @@ func main() {
     router.Get("/api/active-slots", handlers.GetActiveShiftsHandler(database))
     router.Post("/api/auth/refresh", authHandler.RefreshTokenHandler)
     router.Get("/ws", handlers.WebSocketHandler(wsManager, database, jwtService))
+    
+    // Защищённые маршруты
     router.Group(func(r chi.Router) {
         r.Use(jwtauth.Authenticator(jwtAuth))
+        
+        // Профиль и базовые функции
         r.Get("/api/profile", profileHandler.GetProfile)
         r.Post("/api/logout", authHandler.LogoutHandler)
         r.Post("/api/auth/complete-registration", authHandler.CompleteRegistrationHandler)
+        
+        // Смены
         r.Get("/api/admin/active-shifts", GetActiveShiftsForAll(database))
         r.Get("/api/admin/ended-shifts", handlers.GetEndedShiftsHandler(database))
         r.Post("/api/slot/start", handlers.StartSlotHandler(database))
@@ -94,19 +115,35 @@ func main() {
         r.Get("/api/shifts/active", handlers.GetUserActiveShiftHandler(database))
         r.Get("/api/shifts", handlers.GetShiftsHandler(database))
         r.Get("/api/users/{userID}/shifts", handlers.GetUserShiftsByIDHandler(database))
+        
+        // Слоты и справочники
         r.Get("/api/slots/positions", handlers.GetAvailablePositionsHandler(database))
         r.Get("/api/slots/times", handlers.GetAvailableTimeSlotsHandler(database))
         r.Get("/api/slots/zones", handlers.GetAvailableZonesHandler(database))
         r.Post("/api/admin/generate-shifts", handlers.GenerateShiftsHandler(database))
+        
+        // Статистика
         r.Get("/api/scooter-stats/shift", scooterStatsHandler.GetShiftStatsHandler)
+        
+        // Карты
         r.Get("/api/admin/maps", mapHandler.GetMapsHandler)
         r.Get("/api/admin/maps/{mapID}", mapHandler.GetMapByIDHandler)
         r.Get("/api/admin/maps/files/{filename}", mapHandler.ServeMapFileHandler)
+        
+        // Задания
         r.Get("/api/admin/tasks", taskHandler.GetTasksHandler)
         r.Get("/api/admin/tasks/files/{filename}", taskHandler.ServeTaskFileHandler)
         r.Get("/api/my/tasks", taskHandler.GetMyTasksHandler)
+        
+        // OTA Обновления - проверка для всех пользователей
+        r.Post("/api/app/version/check", appVersionHandler.CheckVersionHandler)
+        r.Get("/api/app/version/latest", appVersionHandler.GetLatestVersionHandler)
+        
+        // Админские маршруты
         r.Group(func(r chi.Router) {
             r.Use(superadminOnlyMiddleware(jwtService))
+            
+            // Пользователи
             r.Get("/api/admin/users", handlers.ListAdminUsersHandler(database))
             r.Patch("/api/admin/users/{userID}/role", handlers.UpdateUserRoleHandler(database))
             r.Post("/api/admin/roles", handlers.CreateRoleHandler(database))
@@ -115,20 +152,34 @@ func main() {
             r.Patch("/api/admin/users/{userID}/status", handlers.UpdateUserStatusHandler(database))
             r.Delete("/api/admin/users/{userID}", handlers.DeleteUserHandler(database))
             r.Post("/api/admin/users/{userID}/end-shift", handlers.ForceEndShiftHandler(database))
+            
+            // Карты
             r.Post("/api/admin/maps/upload", mapHandler.UploadMapHandler)
             r.Delete("/api/admin/maps/{mapID}", mapHandler.DeleteMapHandler)
+            
+            // Зоны
             r.Get("/api/admin/zones", handlers.GetAvailableZonesHandler(database))
             r.Post("/api/admin/zones", handlers.CreateZoneHandler(database))
             r.Put("/api/admin/zones/{id}", handlers.UpdateZoneHandler(database))
             r.Delete("/api/admin/zones/{id}", handlers.DeleteZoneHandler(database))
+            
+            // Задания
             r.Post("/api/admin/tasks", taskHandler.CreateTaskHandler)
             r.Patch("/api/admin/tasks/{taskID}/status", taskHandler.UpdateTaskStatusHandler)
             r.Delete("/api/admin/tasks/{taskID}", taskHandler.DeleteTaskHandler)
+            
+            // OTA Обновления - управление для админов
+            r.Get("/api/admin/app/versions", appVersionHandler.ListVersionsHandler)
+            r.Post("/api/admin/app/versions", appVersionHandler.CreateVersionHandler)
+            r.Put("/api/admin/app/versions/{id}", appVersionHandler.UpdateVersionHandler)
+            r.Delete("/api/admin/app/versions/{id}", appVersionHandler.DeleteVersionHandler)
         })
     })
+    
     if err := ensureUploadDirs(); err != nil {
         log.Fatalf("Failed to create upload directories: %v", err)
     }
+    
     serverAddress := fmt.Sprintf(":%s", cfg.ServerPort)
     log.Printf("🚀 Server starting on %s", serverAddress)
     log.Fatal(http.ListenAndServe(serverAddress, router))
@@ -205,4 +256,34 @@ func GetActiveShiftsForAll(db *sql.DB) http.HandlerFunc {
         }
         handlers.RespondWithJSON(w, http.StatusOK, shifts)
     }
+}
+
+// Создание таблицы для версий приложения
+func createAppVersionsTable(db *sql.DB) error {
+    query := `
+    CREATE TABLE IF NOT EXISTS app_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        platform TEXT NOT NULL,
+        version TEXT NOT NULL,
+        build_number INTEGER NOT NULL,
+        release_notes TEXT,
+        download_url TEXT NOT NULL,
+        min_sdk_version INTEGER DEFAULT 0,
+        is_mandatory BOOLEAN DEFAULT FALSE,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_app_versions_platform_version ON app_versions(platform, version);
+    CREATE INDEX IF NOT EXISTS idx_app_versions_active ON app_versions(is_active);
+    CREATE INDEX IF NOT EXISTS idx_app_versions_build ON app_versions(build_number);
+    
+    INSERT OR IGNORE INTO app_versions (platform, version, build_number, release_notes, download_url, is_mandatory, is_active) VALUES
+    ('android', '1.0.0', 100, 'Первый релиз приложения', 'https://example.com/app-release.apk', FALSE, TRUE),
+    ('ios', '1.0.0', 100, 'Первый релиз приложения', 'https://apps.apple.com/app/id123456789', FALSE, TRUE);
+    `
+    
+    _, err := db.Exec(query)
+    return err
 }
