@@ -1,3 +1,4 @@
+// handlers/auth.go
 package handlers
 
 import (
@@ -30,7 +31,6 @@ func NewAuthHandler(db *sql.DB, jwtService *services.JWTService, tgService *serv
 }
 
 // RefreshTokenHandler — обновление access_token с помощью refresh_token
-// handlers/auth.go
 func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
 	type RequestBody struct {
 		RefreshToken string `json:"refresh_token"`
@@ -39,6 +39,11 @@ func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 	var body RequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+
+	if body.RefreshToken == "" {
+		RespondWithError(w, http.StatusUnauthorized, "Refresh token required")
 		return
 	}
 
@@ -57,17 +62,19 @@ func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Генерируем новый access_token
-	accessToken, err := h.jwtService.GenerateAccessToken(userID, username, role)
+	// Генерируем новый access_token и refresh_token
+	accessToken, refreshToken, err := h.jwtService.GenerateToken(userID, username, role)
 	if err != nil {
 		RespondWithError(w, http.StatusInternalServerError, "Could not generate token")
 		return
 	}
 
 	RespondWithJSON(w, http.StatusOK, map[string]string{
-		"access_token": accessToken,
+		"token":         accessToken,
+		"refresh_token": refreshToken,
 	})
 }
+
 // RegisterHandler — регистрация нового пользователя
 func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	var regData struct {
@@ -143,6 +150,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		loginData.Username,
 	)
 
+	// ✅ ИСПРАВЛЕНО: было &role → теперь &user.Role
 	err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Role)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -185,15 +193,24 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if validatedData == nil {
+		RespondWithError(w, http.StatusUnauthorized, "Telegram auth validation returned nil data")
+		return
+	}
+
+	tgID, err := strconv.Atoi(validatedData["id"])
+	if err != nil {
+		RespondWithError(w, http.StatusInternalServerError, "Invalid Telegram ID format")
+		return
+	}
+
 	var user struct {
 		ID         int
 		Username   string
 		FirstName  string
-		TelegramID int
+		TelegramID sql.NullInt64
 		Role       string
 	}
-
-	tgID, _ := strconv.Atoi(validatedData["id"])
 
 	err = h.db.QueryRow(`
         SELECT id, username, first_name, telegram_id, role
@@ -203,35 +220,73 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 	).Scan(&user.ID, &user.Username, &user.FirstName, &user.TelegramID, &user.Role)
 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("Database error finding user by telegram_id %d: %v", tgID, err)
 		RespondWithError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
 
 	if errors.Is(err, sql.ErrNoRows) {
-		username := validatedData["username"]
-		if username == "" {
-			username = "tg_user_" + validatedData["id"]
+		tgUsername := validatedData["username"]
+		if tgUsername == "" {
+			tgUsername = "tg_user_" + validatedData["id"]
 		}
 
-		res, err := h.db.Exec(`
-            INSERT INTO users (telegram_id, username, first_name, role)
-            VALUES (?, ?, ?, 'user')`,
-			tgID,
-			username,
-			validatedData["first_name"],
-		)
+		err = h.db.QueryRow(`
+			SELECT id, username, first_name, telegram_id, role
+			FROM users
+			WHERE username = ? COLLATE NOCASE`,
+			tgUsername,
+		).Scan(&user.ID, &user.Username, &user.FirstName, &user.TelegramID, &user.Role)
 
-		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "Failed to create user: "+err.Error())
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("Database error finding user by username %s: %v", tgUsername, err)
+			RespondWithError(w, http.StatusInternalServerError, "Database error")
 			return
 		}
 
-		id, _ := res.LastInsertId()
-		user.ID = int(id)
-		user.Username = username
-		user.FirstName = validatedData["first_name"]
-		user.TelegramID = tgID
-		user.Role = "user"
+		if errors.Is(err, sql.ErrNoRows) {
+			res, err := h.db.Exec(`
+				INSERT INTO users (telegram_id, username, first_name, role)
+				VALUES (?, ?, ?, 'user')`,
+				tgID,
+				tgUsername,
+				validatedData["first_name"],
+			)
+
+			if err != nil {
+				log.Printf("Failed to create user for telegram_id %d: %v", tgID, err)
+				RespondWithError(w, http.StatusInternalServerError, "Failed to create user: "+err.Error())
+				return
+			}
+
+			id, _ := res.LastInsertId()
+			user.ID = int(id)
+			user.Username = tgUsername
+			user.FirstName = validatedData["first_name"]
+			user.TelegramID = sql.NullInt64{Int64: int64(tgID), Valid: true}
+			user.Role = "user"
+		} else {
+			_, err = h.db.Exec(`UPDATE users SET telegram_id = ? WHERE id = ?`, tgID, user.ID)
+			if err != nil {
+				log.Printf("Failed to update user %d with telegram_id %d: %v", user.ID, tgID, err)
+			} else {
+				user.TelegramID = sql.NullInt64{Int64: int64(tgID), Valid: true}
+			}
+		}
+	} else {
+		_, err = h.db.Exec(`
+			UPDATE users 
+			SET telegram_id = ?, first_name = ?
+			WHERE id = ?`,
+			tgID,
+			validatedData["first_name"],
+			user.ID,
+		)
+		if err != nil {
+			log.Printf("Failed to update user %d with telegram_id %d: %v", user.ID, tgID, err)
+		} else {
+			user.TelegramID = sql.NullInt64{Int64: int64(tgID), Valid: true}
+		}
 	}
 
 	token, refreshToken, err := h.jwtService.GenerateToken(user.ID, user.Username, user.Role)
@@ -246,12 +301,12 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		"user_id":       user.ID,
 		"username":      user.Username,
 		"first_name":    user.FirstName,
-		"telegram_id":   user.TelegramID,
+		"telegram_id":   user.TelegramID.Int64,
 		"role":          user.Role,
 	})
 }
 
-// LogoutHandler — выход (в будущем можно добавить отмену refresh-токена)
+// LogoutHandler — выход
 func (h *AuthHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	RespondWithJSON(w, http.StatusOK, map[string]string{
 		"message": "Logged out successfully",
@@ -284,8 +339,9 @@ func (h *AuthHandler) TelegramAuthCallbackHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	// 🔥 Исправлен URL — убраны пробелы
 	resp, err := http.Post(
-		"http://localhost:6066/api/auth/telegram",
+		"https://eom-sharing.duckdns.org/api/auth/telegram",
 		"application/json",
 		strings.NewReader(string(jsonData)),
 	)
@@ -315,14 +371,14 @@ func (h *AuthHandler) TelegramAuthCallbackHandler(w http.ResponseWriter, r *http
         <head>
             <title>Auth Success</title>
             <script>
-                window.location.href = "%s/api/auth/telegram-success?token=%s";
+                window.location.href = "https://eom-sharing.duckdns.org/api/auth/telegram-success?token=%s";
             </script>
         </head>
         <body>
             <p>Авторизация прошла успешно... Перенаправление...</p>
         </body>
         </html>
-        `, AppConfigBackendURL, token)
+        `, token)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -388,5 +444,3 @@ func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http
 		"message": "Registration completed. Awaiting administrator approval.",
 	})
 }
-
-const AppConfigBackendURL = "https://eom-sharing.duckdns.org"

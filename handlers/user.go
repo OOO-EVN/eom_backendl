@@ -1,12 +1,15 @@
+// handlers/user.go
 package handlers
 
 import (
 	"database/sql"
 	"net/http"
 	"log"
+	"time"
+
+	"github.com/evn/eom_backendl/services"
 )
 
-// ✅ Исправлено: firstName → first_name
 type UserAPIResponse struct {
 	ID        int    `json:"id"`
 	Username  string `json:"username"`
@@ -67,4 +70,35 @@ func nullStringOrEmpty(ns sql.NullString) string {
 		return ns.String
 	}
 	return ""
+}
+
+type LocationResponse struct {
+	UserID    int     `json:"user_id"`
+	Lat       float64 `json:"lat"`
+	Lng       float64 `json:"lng"`
+	Timestamp string  `json:"timestamp"`
+}
+
+// ✅ Экспортируем как функцию пакета handlers
+func GetOnlineUsersHandler(store *services.RedisStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		locations, err := store.GetAllLocations()
+		if err != nil {
+			log.Printf("Redis error in GetAllLocations: %v", err)
+			RespondWithError(w, http.StatusInternalServerError, "Failed to get online users")
+			return
+		}
+
+		var responses []LocationResponse
+		for _, loc := range locations {
+			responses = append(responses, LocationResponse{
+				UserID:    loc.UserID,
+				Lat:       loc.Lat,
+				Lng:       loc.Lng,
+				Timestamp: loc.Timestamp.UTC().Format(time.RFC3339),
+			})
+		}
+
+		RespondWithJSON(w, http.StatusOK, responses)
+	}
 }
