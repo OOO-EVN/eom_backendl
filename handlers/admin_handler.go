@@ -16,46 +16,46 @@ type CreateUserRequest struct {
 }
 
 func CreateUserHandler(db *sql.DB) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        var input CreateUserRequest
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input CreateUserRequest
 
-        if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-            RespondWithError(w, http.StatusBadRequest, "Invalid JSON")
-            return
-        }
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid JSON")
+			return
+		}
 
-        if input.Username == "" {
-            RespondWithError(w, http.StatusBadRequest, "Username is required")
-            return
-        }
+		if input.Username == "" {
+			RespondWithError(w, http.StatusBadRequest, "Username is required")
+			return
+		}
 
-        // Проверяем, существует ли пользователь с таким именем
-        var count int
-        err := db.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", input.Username).Scan(&count)
-        if err != nil {
-            log.Printf("DB error checking for existing user: %v", err)
-            RespondWithError(w, http.StatusInternalServerError, "DB error")
-            return
-        }
-        if count > 0 {
-            RespondWithError(w, http.StatusConflict, "Username already exists")
-            return
-        }
+		// Проверяем, существует ли пользователь с таким именем
+		var count int
+		err := db.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", input.Username).Scan(&count)
+		if err != nil {
+			log.Printf("DB error checking for existing user: %v", err)
+			RespondWithError(w, http.StatusInternalServerError, "DB error")
+			return
+		}
+		if count > 0 {
+			RespondWithError(w, http.StatusConflict, "Username already exists")
+			return
+		}
 
-        _, err = db.Exec(
-            "INSERT INTO users (username, first_name, role) VALUES (?, ?, ?)",
-            input.Username,
-            input.FirstName,
-            "scout",
-        )
-        if err != nil {
-            log.Printf("DB error creating user: %v", err)
-            RespondWithError(w, http.StatusInternalServerError, "DB error creating user")
-            return
-        }
+		_, err = db.Exec(
+			"INSERT INTO users (username, first_name, role) VALUES (?, ?, ?)",
+			input.Username,
+			input.FirstName,
+			"scout",
+		)
+		if err != nil {
+			log.Printf("DB error creating user: %v", err)
+			RespondWithError(w, http.StatusInternalServerError, "DB error creating user")
+			return
+		}
 
-        RespondWithJSON(w, http.StatusCreated, map[string]string{"message": "User created successfully"})
-    }
+		RespondWithJSON(w, http.StatusCreated, map[string]string{"message": "User created successfully"})
+	}
 }
 func UpdateUserRoleHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -93,32 +93,47 @@ func UpdateUserRoleHandler(db *sql.DB) http.HandlerFunc {
 
 func UpdateUserStatusHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Получаем userID из URL
 		userIDStr := chi.URLParam(r, "userID")
 		userID, err := strconv.Atoi(userIDStr)
 		if err != nil {
-			RespondWithError(w, http.StatusBadRequest, "Invalid User ID")
+			RespondWithError(w, http.StatusBadRequest, "Invalid user ID")
 			return
 		}
 
-		var update struct {
-			IsActive bool `json:"is_active"`
+		// Декодируем тело запроса
+		var req struct {
+			Status string `json:"status"` // Ожидаем "active" или "pending"
 		}
-		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			RespondWithError(w, http.StatusBadRequest, "Invalid request body")
 			return
 		}
 
-		_, err = db.Exec("UPDATE users SET is_active = ? WHERE id = ?", update.IsActive, userID)
+		// Проверяем, что статус допустимый
+		if req.Status != "active" && req.Status != "pending" {
+			RespondWithError(w, http.StatusBadRequest, "Invalid status value. Must be 'active' or 'pending'")
+			return
+		}
+
+		// Подготавливаем значения для БД
+		isActive := 0
+		if req.Status == "active" {
+			isActive = 1
+		}
+
+		// Обновляем запись в БД
+		_, err = db.Exec("UPDATE users SET status = ?, is_active = ? WHERE id = ?", req.Status, isActive, userID)
 		if err != nil {
-			log.Printf("Failed to update user status: %v", err)
+			log.Printf("Failed to update user %d status: %v", userID, err)
 			RespondWithError(w, http.StatusInternalServerError, "Failed to update user status")
 			return
 		}
 
+		// Отправляем успешный ответ
 		RespondWithJSON(w, http.StatusOK, map[string]string{"message": "User status updated successfully"})
 	}
 }
-
 func DeleteUserHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userIDStr := chi.URLParam(r, "userID")

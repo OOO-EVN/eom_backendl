@@ -102,8 +102,8 @@ func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = h.db.Exec(`
-        INSERT INTO users (username, first_name, password_hash, role)
-        VALUES (?, ?, ?, 'user')`,
+			INSERT INTO users (username, first_name, password_hash, role)
+			VALUES (?, ?, ?, 'user')`,
 		regData.Username,
 		regData.FirstName,
 		passwordHash,
@@ -139,9 +139,9 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	row := h.db.QueryRow(`
-        SELECT id, username, password_hash, role, status
-        FROM users
-        WHERE username = ? COLLATE NOCASE`,
+			SELECT id, username, password_hash, role, status
+			FROM users
+			WHERE username = ? COLLATE NOCASE`,
 		loginData.Username,
 	)
 
@@ -218,9 +218,9 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	err = h.db.QueryRow(`
-        SELECT id, username, first_name, telegram_id, role, status
-        FROM users
-        WHERE telegram_id = ?`,
+			SELECT id, username, first_name, telegram_id, role, status
+			FROM users
+			WHERE telegram_id = ?`,
 		tgID,
 	).Scan(&user.ID, &user.Username, &user.FirstName, &user.TelegramID, &user.Role, &user.Status)
 
@@ -237,9 +237,9 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		}
 
 		err = h.db.QueryRow(`
-			SELECT id, username, first_name, telegram_id, role, status
-			FROM users
-			WHERE username = ? COLLATE NOCASE`,
+				SELECT id, username, first_name, telegram_id, role, status
+				FROM users
+				WHERE username = ? COLLATE NOCASE`,
 			tgUsername,
 		).Scan(&user.ID, &user.Username, &user.FirstName, &user.TelegramID, &user.Role, &user.Status)
 
@@ -251,8 +251,8 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 
 		if errors.Is(err, sql.ErrNoRows) {
 			res, err := h.db.Exec(`
-				INSERT INTO users (telegram_id, username, first_name, role, status)
-				VALUES (?, ?, ?, 'user', 'pending')`,
+					INSERT INTO users (telegram_id, username, first_name, role, status)
+					VALUES (?, ?, ?, 'user', 'pending')`,
 				tgID,
 				tgUsername,
 				validatedData["first_name"],
@@ -281,9 +281,9 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		}
 	} else {
 		_, err = h.db.Exec(`
-			UPDATE users 
-			SET telegram_id = ?, first_name = ?
-			WHERE id = ?`,
+				UPDATE users 
+				SET telegram_id = ?, first_name = ?
+				WHERE id = ?`,
 			tgID,
 			validatedData["first_name"],
 			user.ID,
@@ -383,19 +383,19 @@ func (h *AuthHandler) TelegramAuthCallbackHandler(w http.ResponseWriter, r *http
 		}
 
 		html := fmt.Sprintf(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Auth Success</title>
-            <script>
-                window.location.href = "https://eom-sharing.duckdns.org/api/auth/telegram-success?token=%s";
-            </script>
-        </head>
-        <body>
-            <p>Авторизация прошла успешно... Перенаправление...</p>
-        </body>
-        </html>
-        `, token)
+			<!DOCTYPE html>
+			<html>
+			<head>
+				<title>Auth Success</title>
+				<script>
+					window.location.href = "https://eom-sharing.duckdns.org/api/auth/telegram-success?token=%s";
+				</script>
+			</head>
+			<body>
+				<p>Авторизация прошла успешно... Перенаправление...</p>
+			</body>
+			</html>
+			`, token)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -440,9 +440,9 @@ func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http
 	}
 
 	_, err := h.db.Exec(`
-		UPDATE users 
-		SET first_name = ?, last_name = ?, phone = ?, status = 'pending', is_active = 0
-		WHERE id = ?`,
+			UPDATE users 
+			SET first_name = ?, last_name = ?, phone = ?, status = 'pending', is_active = 0
+			WHERE id = ?`,
 		regData.FirstName,
 		regData.LastName,
 		regData.Phone,

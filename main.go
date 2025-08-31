@@ -92,6 +92,7 @@ func main() {
 	router.Post("/api/auth/login", authHandler.LoginHandler)
 	router.Post("/api/auth/telegram", authHandler.TelegramAuthHandler)
 	router.Get("/auth_callback", authHandler.TelegramAuthCallbackHandler)
+
 	router.Get("/api/users", handlers.ListUsersHandler(database))
 	router.Handle("/uploads/*", http.StripPrefix("/uploads", http.FileServer(http.Dir("./uploads"))))
 	router.Get("/api/active-slots", handlers.GetActiveShiftsHandler(database))
@@ -108,7 +109,7 @@ func main() {
 		r.Get("/api/profile", profileHandler.GetProfile)
 		r.Post("/api/logout", authHandler.LogoutHandler)
 		r.Post("/api/auth/complete-registration", authHandler.CompleteRegistrationHandler)
-r.Get("/api/online-users", handlers.GetOnlineUsersHandler(redisStore))
+		r.Get("/api/online-users", handlers.GetOnlineUsersHandler(redisStore))
 		r.Get("/api/admin/active-shifts", GetActiveShiftsForAll(database))
 		r.Get("/api/admin/ended-shifts", handlers.GetEndedShiftsHandler(database))
 		r.Post("/api/slot/start", handlers.StartSlotHandler(database))
