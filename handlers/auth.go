@@ -30,7 +30,6 @@ func NewAuthHandler(db *sql.DB, jwtService *services.JWTService, tgService *serv
 	}
 }
 
-// RefreshTokenHandler — обновление access_token с помощью refresh_token
 func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
 	type RequestBody struct {
 		RefreshToken string `json:"refresh_token"`
@@ -47,14 +46,12 @@ func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Проверяем refresh-токен
 	userID, err := h.jwtService.ValidateRefreshToken(body.RefreshToken)
 	if err != nil {
 		RespondWithError(w, http.StatusUnauthorized, "Invalid or expired refresh token")
 		return
 	}
 
-	// Получаем username и role
 	var username, role string
 	err = h.db.QueryRow("SELECT username, role FROM users WHERE id = ?", userID).Scan(&username, &role)
 	if err != nil {
@@ -62,7 +59,6 @@ func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Генерируем новый access_token и refresh_token
 	accessToken, refreshToken, err := h.jwtService.GenerateToken(userID, username, role)
 	if err != nil {
 		RespondWithError(w, http.StatusInternalServerError, "Could not generate token")
@@ -75,7 +71,6 @@ func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// RegisterHandler — регистрация нового пользователя
 func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	var regData struct {
 		Username  string `json:"username"`
@@ -124,7 +119,6 @@ func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// LoginHandler — вход пользователя
 func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	var loginData struct {
 		Username string `json:"username"`
@@ -141,17 +135,17 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		Username     string
 		PasswordHash string
 		Role         string
+		Status       string
 	}
 
 	row := h.db.QueryRow(`
-        SELECT id, username, password_hash, role
+        SELECT id, username, password_hash, role, status
         FROM users
         WHERE username = ? COLLATE NOCASE`,
 		loginData.Username,
 	)
 
-	// ✅ ИСПРАВЛЕНО: было &role → теперь &user.Role
-	err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Role)
+	err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Role, &user.Status)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			RespondWithError(w, http.StatusUnauthorized, "Invalid credentials")
@@ -163,6 +157,17 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	if !services.CheckPasswordHash(loginData.Password, user.PasswordHash) {
 		RespondWithError(w, http.StatusUnauthorized, "Invalid credentials")
+		return
+	}
+
+	if user.Status == "pending" && user.Role != "superadmin" {
+		RespondWithJSON(w, http.StatusOK, map[string]interface{}{
+			"status":   user.Status,
+			"message":  "Account awaiting admin approval",
+			"user_id":  user.ID,
+			"username": user.Username,
+			"role":     user.Role,
+		})
 		return
 	}
 
@@ -179,7 +184,6 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// TelegramAuthHandler — аутентификация через Telegram
 func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request) {
 	var tgData map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&tgData); err != nil {
@@ -210,14 +214,15 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		FirstName  string
 		TelegramID sql.NullInt64
 		Role       string
+		Status     string
 	}
 
 	err = h.db.QueryRow(`
-        SELECT id, username, first_name, telegram_id, role
+        SELECT id, username, first_name, telegram_id, role, status
         FROM users
         WHERE telegram_id = ?`,
 		tgID,
-	).Scan(&user.ID, &user.Username, &user.FirstName, &user.TelegramID, &user.Role)
+	).Scan(&user.ID, &user.Username, &user.FirstName, &user.TelegramID, &user.Role, &user.Status)
 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		log.Printf("Database error finding user by telegram_id %d: %v", tgID, err)
@@ -232,11 +237,11 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		}
 
 		err = h.db.QueryRow(`
-			SELECT id, username, first_name, telegram_id, role
+			SELECT id, username, first_name, telegram_id, role, status
 			FROM users
 			WHERE username = ? COLLATE NOCASE`,
 			tgUsername,
-		).Scan(&user.ID, &user.Username, &user.FirstName, &user.TelegramID, &user.Role)
+		).Scan(&user.ID, &user.Username, &user.FirstName, &user.TelegramID, &user.Role, &user.Status)
 
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			log.Printf("Database error finding user by username %s: %v", tgUsername, err)
@@ -246,8 +251,8 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 
 		if errors.Is(err, sql.ErrNoRows) {
 			res, err := h.db.Exec(`
-				INSERT INTO users (telegram_id, username, first_name, role)
-				VALUES (?, ?, ?, 'user')`,
+				INSERT INTO users (telegram_id, username, first_name, role, status)
+				VALUES (?, ?, ?, 'user', 'pending')`,
 				tgID,
 				tgUsername,
 				validatedData["first_name"],
@@ -265,6 +270,7 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 			user.FirstName = validatedData["first_name"]
 			user.TelegramID = sql.NullInt64{Int64: int64(tgID), Valid: true}
 			user.Role = "user"
+			user.Status = "pending"
 		} else {
 			_, err = h.db.Exec(`UPDATE users SET telegram_id = ? WHERE id = ?`, tgID, user.ID)
 			if err != nil {
@@ -289,6 +295,19 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	if user.Status == "pending" && user.Role != "superadmin" {
+		RespondWithJSON(w, http.StatusOK, map[string]interface{}{
+			"status":      user.Status,
+			"message":     "Account awaiting admin approval",
+			"user_id":     user.ID,
+			"username":    user.Username,
+			"first_name":  user.FirstName,
+			"telegram_id": user.TelegramID.Int64,
+			"role":        user.Role,
+		})
+		return
+	}
+
 	token, refreshToken, err := h.jwtService.GenerateToken(user.ID, user.Username, user.Role)
 	if err != nil {
 		RespondWithError(w, http.StatusInternalServerError, "Failed to generate token")
@@ -303,17 +322,16 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		"first_name":    user.FirstName,
 		"telegram_id":   user.TelegramID.Int64,
 		"role":          user.Role,
+		"status":        user.Status,
 	})
 }
 
-// LogoutHandler — выход
 func (h *AuthHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	RespondWithJSON(w, http.StatusOK, map[string]string{
 		"message": "Logged out successfully",
 	})
 }
 
-// TelegramAuthCallbackHandler — обработка callback от Telegram
 func (h *AuthHandler) TelegramAuthCallbackHandler(w http.ResponseWriter, r *http.Request) {
 	data := make(map[string]string)
 	for key, values := range r.URL.Query() {
@@ -339,7 +357,6 @@ func (h *AuthHandler) TelegramAuthCallbackHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	// 🔥 Исправлен URL — убраны пробелы
 	resp, err := http.Post(
 		"https://eom-sharing.duckdns.org/api/auth/telegram",
 		"application/json",
@@ -392,7 +409,6 @@ func (h *AuthHandler) TelegramAuthCallbackHandler(w http.ResponseWriter, r *http
 	}
 }
 
-// CompleteRegistrationHandler — завершение регистрации
 func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userIDVal := ctx.Value(config.UserIDKey)
