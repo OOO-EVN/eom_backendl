@@ -1,15 +1,11 @@
-// handlers/ended_shifts_handler.go
 package handlers
 
 import (
 	"database/sql"
-//	"encoding/json"
 	"log"
 	"net/http"
-//	"time"
 )
 
-// EndedShift представляет структуру завершённой смены
 type EndedShift struct {
 	ID            int    `json:"id"`
 	UserID        int    `json:"user_id"`
@@ -22,7 +18,6 @@ type EndedShift struct {
 	Selfie        string `json:"selfie"`
 }
 
-// GetEndedShiftsHandler возвращает список завершённых смен
 func GetEndedShiftsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := `
@@ -45,7 +40,7 @@ func GetEndedShiftsHandler(db *sql.DB) http.HandlerFunc {
 		var shifts []EndedShift
 		for rows.Next() {
 			var shift EndedShift
-			var endTime sql.NullString // на случай, если end_time NULL (но у нас WHERE NOT NULL)
+			var endTime sql.NullString
 			err := rows.Scan(
 				&shift.ID,
 				&shift.UserID,

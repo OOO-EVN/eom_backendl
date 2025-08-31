@@ -10,7 +10,6 @@ import (
     "os"
     "path/filepath"
     "strconv"
-    "strings"
     "time"
     "crypto/rand"
     _ "image/jpeg"
@@ -19,6 +18,12 @@ import (
     "github.com/go-chi/chi/v5"
 )
 
+// -------------------------------
+// Вспомогательные функции
+// -------------------------------
+
+
+// generateSafeFilename генерирует уникальное имя файла для селфи
 func generateSafeFilename(userID int, ext string) string {
     randomBytes := make([]byte, 8)
     if _, err := rand.Read(randomBytes); err != nil {
@@ -28,6 +33,10 @@ func generateSafeFilename(userID int, ext string) string {
     return fmt.Sprintf("selfie_%d_%s%s", userID, hash, ext)
 }
 
+// -------------------------------
+// Обработчики
+// -------------------------------
+
 func StartSlotHandler(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         userID, ok := r.Context().Value(config.UserIDKey).(int)
@@ -35,6 +44,7 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
             RespondWithError(w, http.StatusUnauthorized, "User not authenticated")
             return
         }
+
         var activeCount int
         err := db.QueryRow("SELECT COUNT(*) FROM slots WHERE user_id = ? AND end_time IS NULL", userID).Scan(&activeCount)
         if err != nil {
@@ -45,12 +55,13 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
             RespondWithError(w, http.StatusBadRequest, "Slot already active")
             return
         }
+
         var position string
         err = db.QueryRow("SELECT role FROM users WHERE id = ?", userID).Scan(&position)
         if err != nil {
             position = "user"
         }
-        
+
         positionMap := map[string]string{
             "superadmin":   "Суперадмин",
             "admin":        "Администратор",
@@ -58,80 +69,58 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
             "scout":        "Скаут",
             "user":         "Пользователь",
         }
-        
+
         if readablePosition, exists := positionMap[position]; exists {
             position = readablePosition
         } else {
             position = "Сотрудник"
         }
+
         if err := r.ParseMultipartForm(5 << 20); err != nil {
             RespondWithError(w, http.StatusBadRequest, "File too large or malformed")
             return
         }
+
         slotTimeRange := r.FormValue("slot_time_range")
         zone := r.FormValue("zone")
+
         if slotTimeRange == "" || zone == "" {
             RespondWithError(w, http.StatusBadRequest, "Missing required fields")
             return
         }
-        if len(zone) > 0 && zone[0] == '{' {
-            nameStart := strings.Index(zone, "name:")
-            if nameStart != -1 {
-                nameStart += 5
-                for nameStart < len(zone) && (zone[nameStart] == ' ' || zone[nameStart] == '\t') {
-                    nameStart++
-                }
-                var zoneName string
-                if nameStart < len(zone) {
-                    if zone[nameStart] == '"' {
-                        nameStart++
-                        nameEnd := strings.Index(zone[nameStart:], "\"")
-                        if nameEnd != -1 {
-                            zoneName = zone[nameStart : nameStart+nameEnd]
-                        }
-                    } else {
-                        nameEnd := nameStart
-                        for nameEnd < len(zone) && zone[nameEnd] != '}' && zone[nameEnd] != ',' {
-                            nameEnd++
-                        }
-                        zoneName = strings.TrimSpace(zone[nameStart:nameEnd])
-                    }
-                }
-                if zoneName != "" {
-                    zone = zoneName
-                }
-            }
-        }
+
+        // Нормализуем временной слот
+        slotTimeRange = NormalizeSlot(slotTimeRange)
+
         if !canStartShift(slotTimeRange) {
-            RespondWithError(w, http.StatusBadRequest, "Смену можно начать только за 20 минут до её начала")
-            return
+            RespondWithError(w, http.StatusBadRequest, "Смену можно начать только за 20 минут до её начала или в течение смены")
+            return 
         }
+
+        // Проверяем, существует ли зона
         var zoneExists int
         err = db.QueryRow("SELECT COUNT(*) FROM zones WHERE name = ?", zone).Scan(&zoneExists)
-        if err != nil {
-            RespondWithError(w, http.StatusInternalServerError, "Database error checking zone")
-            return
-        }
-        if zoneExists == 0 {
+        if err != nil || zoneExists == 0 {
             RespondWithError(w, http.StatusBadRequest, "Invalid zone: "+zone)
             return
         }
+
+        // Проверяем, существует ли временной слот
         var slotExists int
         err = db.QueryRow("SELECT COUNT(*) FROM available_time_slots WHERE slot_time_range = ?", slotTimeRange).Scan(&slotExists)
-        if err != nil {
-            RespondWithError(w, http.StatusInternalServerError, "Database error checking time slot")
-            return
-        }
-        if slotExists == 0 {
+        if err != nil || slotExists == 0 {
             RespondWithError(w, http.StatusBadRequest, "Invalid time slot: "+slotTimeRange)
             return
         }
+
+        // Проверяем селфи
         file, _, err := r.FormFile("selfie")
         if err != nil {
             RespondWithError(w, http.StatusBadRequest, "Selfie image is required")
             return
         }
         defer file.Close()
+
         buff := make([]byte, 512)
         _, err = file.Read(buff)
         if err != nil && err != io.EOF {
@@ -143,43 +132,52 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
             RespondWithError(w, http.StatusBadRequest, "Only JPEG and PNG images allowed")
             return
         }
+
         file.Seek(0, 0)
         ext := ".jpg"
         if contentType == "image/png" {
             ext = ".png"
         }
+
         filename := generateSafeFilename(userID, ext)
         filepath := filepath.Join("./uploads/selfies", filename)
         if err := os.MkdirAll("./uploads/selfies", 0755); err != nil {
             RespondWithError(w, http.StatusInternalServerError, "Server error")
             return
         }
+
         out, err := os.Create(filepath)
         if err != nil {
             RespondWithError(w, http.StatusInternalServerError, "Server error")
             return
         }
         defer out.Close()
+
         _, err = io.Copy(out, file)
         if err != nil {
             os.Remove(filepath)
             RespondWithError(w, http.StatusInternalServerError, "Failed to save image")
             return
         }
+
+        // Вставляем смену
         result, err := db.Exec(`
             INSERT INTO slots (user_id, start_time, slot_time_range, position, zone, selfie_path)
             VALUES (?, ?, ?, ?, ?, ?)
         `, userID, time.Now(), slotTimeRange, position, zone, "/uploads/selfies/"+filename)
+
         if err != nil {
             os.Remove(filepath)
             RespondWithError(w, http.StatusInternalServerError, "Database error: "+err.Error())
             return
         }
+
         slotID, err := result.LastInsertId()
         if err != nil {
             RespondWithError(w, http.StatusInternalServerError, "Failed to get slot ID")
             return
         }
+
         RespondWithJSON(w, http.StatusCreated, map[string]interface{}{
             "message":           "Slot started successfully",
             "selfie":            "/uploads/selfies/" + filename,
@@ -193,35 +191,21 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
     }
 }
 
+// canStartShift проверяет, можно ли начать смену в текущее время
 func canStartShift(slotTimeRange string) bool {
     now := time.Now()
-    currentHour := now.Hour()
-    currentMinute := now.Minute()
-    
+    hour, min := now.Hour(), now.Minute()
+
     switch slotTimeRange {
-    case "07:00–15:00":
-        if (currentHour == 6 && currentMinute >= 40) || (currentHour == 7 && currentMinute <= 0) {
-            return true
-        }
-        if (currentHour >= 7 && currentHour < 15) || (currentHour == 15 && currentMinute == 0) {
-            return true
-        }
-        
-    case "15:00–23:00":
-        if (currentHour == 14 && currentMinute >= 40) || (currentHour == 15 && currentMinute <= 0) {
-            return true
-        }
-        if (currentHour >= 15 && currentHour < 23) || (currentHour == 23 && currentMinute == 0) {
-            return true
-        }
-        
-    case "23:00–07:00":
-        if (currentHour == 22 && currentMinute >= 40) || currentHour >= 23 || currentHour < 7 {
-            return true
-        }
+    case "07:00-15:00":
+        return (hour == 6 && min >= 40) || (hour >= 7 && hour < 15) || (hour == 15 && min == 0)
+    case "15:00-23:00":
+        return (hour == 14 && min >= 40) || (hour >= 15 && hour < 23) || (hour == 23 && min == 0)
+    case "07:00-23:00":
+        return (hour == 6 && min >= 40) || (hour >= 7 && hour < 23) || (hour == 23 && min == 0)
+    default:
+        return false //убрать после проверки true для балам
     }
-    
-    return false
 }
 
 func EndSlotHandler(db *sql.DB) http.HandlerFunc {
@@ -231,6 +215,7 @@ func EndSlotHandler(db *sql.DB) http.HandlerFunc {
             RespondWithError(w, http.StatusUnauthorized, "User not authenticated")
             return
         }
+
         var slotID int
         var startTime time.Time
         err := db.QueryRow(`
@@ -243,8 +228,10 @@ func EndSlotHandler(db *sql.DB) http.HandlerFunc {
             RespondWithError(w, http.StatusInternalServerError, "Database error")
             return
         }
+
         endTime := time.Now()
         duration := int(endTime.Sub(startTime).Seconds())
+
         _, err = db.Exec(`
             UPDATE slots SET end_time = ?, worked_duration = ? WHERE id = ?
         `, endTime, duration, slotID)
@@ -252,9 +239,10 @@ func EndSlotHandler(db *sql.DB) http.HandlerFunc {
             RespondWithError(w, http.StatusInternalServerError, "Database error")
             return
         }
+
         RespondWithJSON(w, http.StatusOK, map[string]interface{}{
             "message":     "Slot ended",
-            "worked_time": formatDuration(duration),
+            "worked_time": FormatDuration(duration),
         })
     }
 }
@@ -290,11 +278,13 @@ func GetActiveShiftsHandler(db *sql.DB) http.HandlerFunc {
                 http.Error(w, `{"error":"Error processing data"}`, http.StatusInternalServerError)
                 return
             }
+            // 🔥 Нормализуем перед отправкой клиенту
+            slotTimeRange = NormalizeSlot(slotTimeRange)
             shifts = append(shifts, map[string]interface{}{
                 "id":              id,
                 "user_id":         userID,
                 "username":        username,
-                "slot_time_range": slotTimeRange,
+                "slot_time_range": slotTimeRange, // ← уже нормализован
                 "position":        position,
                 "zone":            zone,
                 "start_time":      startTime,
@@ -308,7 +298,6 @@ func GetActiveShiftsHandler(db *sql.DB) http.HandlerFunc {
         json.NewEncoder(w).Encode(shifts)
     }
 }
-
 func GetUserActiveShiftHandler(db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         userID, ok := r.Context().Value(config.UserIDKey).(int)
@@ -385,7 +374,7 @@ func GetShiftsHandler(db *sql.DB) http.HandlerFunc {
             shift := map[string]interface{}{
                 "date":             startTime.Format("2006-01-02"),
                 "selected_slot":    slotTimeRange.String,
-                "worked_time":      formatDuration(int(workedDuration.Int64)),
+                "worked_time":      FormatDuration(int(workedDuration.Int64)),
                 "work_period":      fmt.Sprintf("%s–%s", startTime.Format("15:04"), endTime.Format("15:04")),
                 "transport_status": "Транспорт не указан",
                 "new_tasks":        0,
@@ -450,7 +439,7 @@ func GetUserShiftsByIDHandler(db *sql.DB) http.HandlerFunc {
             shift := map[string]interface{}{
                 "date":             startTime.Format("2006-01-02"),
                 "selected_slot":    slotTimeRange.String,
-                "worked_time":      formatDuration(int(workedDuration.Int64)),
+                "worked_time":      FormatDuration(int(workedDuration.Int64)),
                 "work_period":      fmt.Sprintf("%s–%s", startTime.Format("15:04"), endTime.Format("15:04")),
                 "transport_status": "Транспорт не указан",
                 "new_tasks":        0,
@@ -479,6 +468,7 @@ func GetAvailablePositionsHandler(db *sql.DB) http.HandlerFunc {
             RespondWithError(w, http.StatusInternalServerError, "Failed to load user role")
             return
         }
+        
         positionMap := map[string]string{
             "superadmin":   "Суперадмин",
             "admin":        "Администратор",
@@ -509,20 +499,8 @@ func GetAvailableTimeSlotsHandler(db *sql.DB) http.HandlerFunc {
             if err := rows.Scan(&timeSlot); err != nil {
                 continue
             }
-            timeSlots = append(timeSlots, timeSlot)
+            timeSlots = append(timeSlots, NormalizeSlot(timeSlot))
         }
         RespondWithJSON(w, http.StatusOK, timeSlots)
     }
-}
-
-func formatDuration(seconds int) string {
-    if seconds <= 0 {
-        return "0 мин"
-    }
-    hours := seconds / 3600
-    mins := (seconds % 3600) / 60
-    if hours > 0 {
-        return fmt.Sprintf("%d ч %d мин", hours, mins)
-    }
-    return fmt.Sprintf("%d мин", mins)
 }

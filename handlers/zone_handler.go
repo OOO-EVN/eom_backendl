@@ -1,4 +1,3 @@
-// handlers/zone_handler.go
 package handlers
 
 import (
@@ -11,13 +10,11 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Zone представляет зону
 type Zone struct {
 	ID   int    `json:"id"`
-	Name string `json:"name"` // теперь это цифра как строка: "1", "2"
+	Name string `json:"name"`
 }
 
-// GetAvailableZonesHandler возвращает список зон
 func GetAvailableZonesHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rows, err := db.Query("SELECT id, name FROM zones ORDER BY name")
@@ -41,7 +38,6 @@ func GetAvailableZonesHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// CreateZoneHandler добавляет новую зону
 func CreateZoneHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var zone Zone
@@ -55,24 +51,28 @@ func CreateZoneHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		result, err := db.Exec("INSERT INTO zones (name) VALUES (?)", zone.Name)
+		result, err := db.Exec("INSERT OR IGNORE INTO zones (name) VALUES (?)", zone.Name)
 		if err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "Failed to create zone")
 			return
 		}
 
 		id, _ := result.LastInsertId()
-		zone.ID = int(id)
+		if id == 0 {
+			var existingID int
+			db.QueryRow("SELECT id FROM zones WHERE name = ?", zone.Name).Scan(&existingID)
+			zone.ID = existingID
+		} else {
+			zone.ID = int(id)
+		}
 
 		RespondWithJSON(w, http.StatusCreated, zone)
 	}
 }
 
-// UpdateZoneHandler обновляет зону
 func UpdateZoneHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, _ := strconv.Atoi(chi.URLParam(r, "id"))
-
 		var zone Zone
 		if err := json.NewDecoder(r.Body).Decode(&zone); err != nil {
 			RespondWithError(w, http.StatusBadRequest, "Invalid JSON")
@@ -90,17 +90,26 @@ func UpdateZoneHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// DeleteZoneHandler удаляет зону
 func DeleteZoneHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+		id, err := strconv.Atoi(chi.URLParam(r, "id"))
+		if err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid zone ID")
+			return
+		}
 
-		_, err := db.Exec("DELETE FROM zones WHERE id = ?", id)
+		result, err := db.Exec("DELETE FROM zones WHERE id = ?", id)
 		if err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "Failed to delete zone")
 			return
 		}
 
-		RespondWithJSON(w, http.StatusOK, map[string]string{"status": "success"})
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			RespondWithError(w, http.StatusNotFound, "Zone not found")
+			return
+		}
+
+		RespondWithJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 	}
 }

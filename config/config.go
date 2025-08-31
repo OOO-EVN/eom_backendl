@@ -1,50 +1,67 @@
+// config/config.go
 package config
 
 import (
-    "os"
+	"os"
+	"strconv" 
+
+	"github.com/redis/go-redis/v9"
 )
+
 type contextKey string
+
 const (
 	UserIDKey contextKey = "user_id"
-	// ... другие константы
 )
-// Config хранит все конфигурации приложения
+
 type Config struct {
-    DatabaseDSN string
-    JwtSecret   string
-    ServerPort  string
-    TelegramBotToken string // Новый параметр
+	DatabaseDSN        string
+	JwtSecret          string
+	ServerPort         string
+	TelegramBotToken   string
+	RedisAddr          string
+	RedisPassword      string
+	RedisDB            int
 }
 
-// NewConfig создает и возвращает новый экземпляр Config
 func NewConfig() *Config {
-    // Получение переменных окружения.
-    // Рекомендуется использовать переменные окружения для секретных данных.
-    dsn := os.Getenv("DATABASE_DSN")
-    if dsn == "" {
-        dsn = "./data.db"
-    }
+	dsn := getEnv("DATABASE_DSN", "./data.db")
+	jwtSecret := getEnv("JWT_SECRET", "0hn/a5hwoWLn4nrmogQo+zDCM7h9203J4Iwhkp7b2ns=")
+	port := getEnv("SERVER_PORT", "6066")
+	telegramBotToken := getEnv("TELEGRAM_BOT_TOKEN", "8213575254:AAEhzM_f_LJ-RRdaME2YAiA7tqtzWjaS-Wk")
+	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
+	redisPassword := getEnv("REDIS_PASSWORD", "")
+	redisDB := parseInt(getEnv("REDIS_DB", "0"))
 
-    jwtSecret := os.Getenv("JWT_SECRET")
-    if jwtSecret == "" {
-        jwtSecret = "0hn/a5hwoWLn4nrmogQo+zDCM7h9203J4Iwhkp7b2ns=" // Измените в продакшене!
-    }
+	return &Config{
+		DatabaseDSN:      dsn,
+		JwtSecret:        jwtSecret,
+		ServerPort:       port,
+		TelegramBotToken: telegramBotToken,
+		RedisAddr:        redisAddr,
+		RedisPassword:    redisPassword,
+		RedisDB:          redisDB,
+	}
+}
 
-    port := os.Getenv("SERVER_PORT")
-    if port == "" {
-        port = "6066"
-    }
-    
-    telegramBotToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-    if telegramBotToken == "" {
-        // Укажите токен вашего бота
-        telegramBotToken = "8213575254:AAEhzM_f_LJ-RRdaME2YAiA7tqtzWjaS-Wk" 
-    }
+func getEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
 
-    return &Config{
-        DatabaseDSN: dsn,
-        JwtSecret:   jwtSecret,
-        ServerPort:  port,
-        TelegramBotToken: telegramBotToken,
-    }
+func parseInt(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
+// NewRedisClient создаёт подключение к Redis
+func NewRedisClient() *redis.Client {
+	cfg := NewConfig()
+	return redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
+	})
 }
