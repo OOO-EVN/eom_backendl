@@ -157,15 +157,15 @@ func main() {
 	}
 
 	go func() {
-		log.Println("✅ Background job: Auto-ending expired shifts every minute")
+		log.Println("✅ Auto-end shifts job started")
+		if count, err := handlers.AutoEndShifts(database); err != nil {
+			log.Printf("❌ Startup failed: %v", err)
+		} else {
+			log.Printf("✅ Startup: ended %d slots", count)
+		}
+
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
-
-		if count, err := handlers.AutoEndShifts(database); err != nil {
-			log.Printf("❌ AutoEndShifts failed on startup: %v", err)
-		} else {
-			log.Printf("✅ AutoEndShifts (startup): ended %d slots", count)
-		}
 
 		for range ticker.C {
 			if count, err := handlers.AutoEndShifts(database); err != nil {
