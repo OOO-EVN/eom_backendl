@@ -409,6 +409,57 @@ func (h *AuthHandler) TelegramAuthCallbackHandler(w http.ResponseWriter, r *http
 	}
 }
 
+// func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http.Request) {
+// 	ctx := r.Context()
+// 	userIDVal := ctx.Value(config.UserIDKey)
+// 	if userIDVal == nil {
+// 		RespondWithError(w, http.StatusUnauthorized, "User ID not found in context")
+// 		return
+// 	}
+
+// 	userID, ok := userIDVal.(int)
+// 	if !ok {
+// 		RespondWithError(w, http.StatusInternalServerError, "Invalid User ID type in context")
+// 		return
+// 	}
+
+// 	var regData struct {
+// 		FirstName string `json:"first_name"`
+// 		LastName  string `json:"last_name"`
+// 		Phone     string `json:"phone"`
+// 	}
+
+// 	if err := json.NewDecoder(r.Body).Decode(&regData); err != nil {
+// 		RespondWithError(w, http.StatusBadRequest, "Invalid request data: "+err.Error())
+// 		return
+// 	}
+
+// 	if regData.FirstName == "" {
+// 		RespondWithError(w, http.StatusBadRequest, "First name is required")
+// 		return
+// 	}
+
+// 	_, err := h.db.Exec(`
+// 			UPDATE users
+// 			SET first_name = ?, last_name = ?, phone = ?, status = 'pending', is_active = 0
+// 			WHERE id = ?`,
+// 		regData.FirstName,
+// 		regData.LastName,
+// 		regData.Phone,
+// 		userID,
+// 	)
+
+// 	if err != nil {
+// 		log.Printf("Database error updating user %d: %v", userID, err)
+// 		RespondWithError(w, http.StatusInternalServerError, "Failed to update user profile")
+// 		return
+// 	}
+
+//		log.Printf("User %d completed registration and is now pending approval", userID)
+//		RespondWithJSON(w, http.StatusOK, map[string]string{
+//			"message": "Registration completed. Awaiting administrator approval.",
+//		})
+//	}
 func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userIDVal := ctx.Value(config.UserIDKey)
@@ -416,7 +467,6 @@ func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http
 		RespondWithError(w, http.StatusUnauthorized, "User ID not found in context")
 		return
 	}
-
 	userID, ok := userIDVal.(int)
 	if !ok {
 		RespondWithError(w, http.StatusInternalServerError, "Invalid User ID type in context")
@@ -428,17 +478,16 @@ func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http
 		LastName  string `json:"last_name"`
 		Phone     string `json:"phone"`
 	}
-
 	if err := json.NewDecoder(r.Body).Decode(&regData); err != nil {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request data: "+err.Error())
 		return
 	}
-
 	if regData.FirstName == "" {
 		RespondWithError(w, http.StatusBadRequest, "First name is required")
 		return
 	}
 
+	// Обновляем данные пользователя и устанавливаем статус 'pending' и is_active = 0
 	_, err := h.db.Exec(`
 			UPDATE users 
 			SET first_name = ?, last_name = ?, phone = ?, status = 'pending', is_active = 0
@@ -448,7 +497,6 @@ func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http
 		regData.Phone,
 		userID,
 	)
-
 	if err != nil {
 		log.Printf("Database error updating user %d: %v", userID, err)
 		RespondWithError(w, http.StatusInternalServerError, "Failed to update user profile")
@@ -456,7 +504,25 @@ func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http
 	}
 
 	log.Printf("User %d completed registration and is now pending approval", userID)
-	RespondWithJSON(w, http.StatusOK, map[string]string{
-		"message": "Registration completed. Awaiting administrator approval.",
+
+	// --- Добавлено: Получаем обновленные данные пользователя ---
+	var updatedUser struct {
+		Status   string `json:"status"`
+		IsActive int    `json:"is_active"`
+	}
+	err = h.db.QueryRow("SELECT status, is_active FROM users WHERE id = ?", userID).Scan(&updatedUser.Status, &updatedUser.IsActive)
+	if err != nil {
+		log.Printf("Database error fetching updated user %d: %v", userID, err)
+		// Не критично, можно продолжить
+		updatedUser.Status = "pending"
+		updatedUser.IsActive = 0
+	}
+	// --- Конец добавления ---
+
+	// Отправляем обновленный статус в ответе
+	RespondWithJSON(w, http.StatusOK, map[string]interface{}{
+		"message":   "Registration completed. Awaiting administrator approval.",
+		"status":    updatedUser.Status,
+		"is_active": updatedUser.IsActive,
 	})
 }
