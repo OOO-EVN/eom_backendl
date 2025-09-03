@@ -1,4 +1,3 @@
-// handlers/profile_handler.go
 package handlers
 
 import (
@@ -24,16 +23,27 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Проверяем, что user_id есть и является строкой
-	userIDStr, ok := claims["user_id"].(string)
-	if !ok {
-		RespondWithError(w, http.StatusBadRequest, "Invalid user ID in token")
-		return
-	}
-
-	userID, err := strconv.Atoi(userIDStr)
-	if err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Invalid user ID")
+	// Получаем user_id из claims
+	var userID int
+	if rawID, ok := claims["user_id"]; ok {
+		switch v := rawID.(type) {
+		case float64:
+			userID = int(v)
+		case int:
+			userID = v
+		case string:
+			if id, err := strconv.Atoi(v); err == nil {
+				userID = id
+			} else {
+				RespondWithError(w, http.StatusBadRequest, "Invalid user ID")
+				return
+			}
+		default:
+			RespondWithError(w, http.StatusBadRequest, "Invalid user ID type")
+			return
+		}
+	} else {
+		RespondWithError(w, http.StatusBadRequest, "User ID not found in token")
 		return
 	}
 
@@ -44,12 +54,14 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		TelegramID sql.NullInt64
 		Role       string
 		AvatarURL  sql.NullString
-		Zone       sql.NullString // Добавлено: поле для зоны
+		Zone       sql.NullString
+		Status     string // ДОБАВЛЕНО
+		IsActive   int    // ДОБАВЛЕНО
 	}
 
-	// Обновленный запрос: ДОБАВЛЕНО поле `zone`
+	// Обновленный запрос с полями status и is_active
 	err = h.db.QueryRow(`
-		SELECT id, username, first_name, telegram_id, role, avatar_url, zone
+		SELECT id, username, first_name, telegram_id, role, avatar_url, zone, status, is_active
 		FROM users
 		WHERE id = ?`, userID).Scan(
 		&user.ID,
@@ -58,19 +70,21 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		&user.TelegramID,
 		&user.Role,
 		&user.AvatarURL,
-		&user.Zone, // Добавлено
+		&user.Zone,
+		&user.Status,   // ДОБАВЛЕНО
+		&user.IsActive, // ДОБАВЛЕНО
 	)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
 			RespondWithError(w, http.StatusNotFound, "User not found")
 		} else {
-			RespondWithError(w, http.StatusInternalServerError, "Database error")
+			RespondWithError(w, http.StatusInternalServerError, "Database error: "+err.Error())
 		}
 		return
 	}
 
-	// --- Логика определения должности (position) на основе роли (role) ---
+	// Логика определения должности
 	var position string
 	switch user.Role {
 	case "scout":
@@ -81,13 +95,13 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		position = "Координатор"
 	case "superadmin":
 		position = "Суперадмин"
-	case "courier": // Добавьте, если у вас есть роль "courier"
+	case "courier":
 		position = "Курьер"
 	default:
 		position = "Стажер"
 	}
 
-	// --- Логика определения аватара ---
+	// Логика определения аватара
 	var finalAvatarURL interface{}
 	if user.AvatarURL.Valid && user.AvatarURL.String != "" {
 		finalAvatarURL = user.AvatarURL.String
@@ -95,15 +109,15 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		finalAvatarURL = nil
 	}
 
-	// --- Логика определения зоны по умолчанию ---
+	// Логика определения зоны
 	var finalZone interface{}
 	if user.Zone.Valid && user.Zone.String != "" {
 		finalZone = user.Zone.String
 	} else {
-		finalZone = "Центр" // Значение по умолчанию
+		finalZone = "Almaty"
 	}
 
-	// Возвращаем профиль с полем `zone`
+	// Возвращаем полный профиль с статусом
 	RespondWithJSON(w, http.StatusOK, map[string]interface{}{
 		"id":         user.ID,
 		"username":   user.Username,
@@ -112,7 +126,9 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		"role":       user.Role,
 		"avatarUrl":  finalAvatarURL,
 		"position":   position,
-		"zone":       finalZone, // Добавлено в ответ
+		"zone":       finalZone,
+		"status":     user.Status,   // ДОБАВЛЕНО
+		"is_active":  user.IsActive, // ДОБАВЛЕНО
 	})
 }
 
