@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -90,14 +91,13 @@ func getEndTimeFromSlot(slotTimeRange string) (time.Time, error) {
 	case "07:00–15:00", "07:00-15:00":
 		return time.Parse("2006-01-02 15:04", dateStr+" 15:00")
 	case "15:00–23:00", "15:00-23:00":
-		return time.Parse("2006-01-02 23:04", dateStr+" 23:00")
+		return time.Parse("2006-01-02 15:04", dateStr+" 23:00")
 	case "07:00–23:00", "07:00-23:00":
-		return time.Parse("2006-01-02 23:04", dateStr+" 23:00")
+		return time.Parse("2006-01-02 15:04", dateStr+" 23:00")
 	default:
-		return time.Time{}, nil
+		return time.Time{}, fmt.Errorf("invalid slot time range: %s", slotTimeRange)
 	}
 }
-
 func endSlot(db *sql.DB, slotID, userID int) error {
 	var startTime time.Time
 	err := db.QueryRow("SELECT start_time FROM slots WHERE id = ? AND end_time IS NULL", slotID).Scan(&startTime)
