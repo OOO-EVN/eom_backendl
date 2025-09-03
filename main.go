@@ -1,4 +1,3 @@
-// main.go
 package main
 
 import (
@@ -9,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/evn/eom_backendl/config"
 	"github.com/evn/eom_backendl/db"
@@ -24,24 +24,18 @@ func main() {
 	database := db.InitDB(cfg.DatabaseDSN)
 	defer database.Close()
 
-	// Создаём таблицы
 	if err := handlers.CreateMapsTable(database); err != nil {
 		log.Fatalf("Failed to create maps table: %v", err)
 	}
-	// if err := handlers.CreateTasksTable(database); err != nil {
-	// 	log.Fatalf("Failed to create tasks table: %v", err)
-	// }
 	if err := createAppVersionsTable(database); err != nil {
 		log.Fatalf("Failed to create app versions table: %v", err)
 	}
 
-	// Redis
 	redisClient := config.NewRedisClient()
 	defer redisClient.Close()
 
-	// JWT
 	jwtAuth := jwtauth.New("HS256", []byte(cfg.JwtSecret), nil)
-	jwtService := services.NewJWTService(cfg.JwtSecret, redisClient) // ← передаём Redis
+	jwtService := services.NewJWTService(cfg.JwtSecret, redisClient)
 	telegramAuthService := services.NewTelegramAuthService(cfg.TelegramBotToken)
 	redisStore := services.NewRedisStore(redisClient)
 	wsManager := services.NewWebSocketManager(redisStore, database)
@@ -50,7 +44,6 @@ func main() {
 	authHandler := handlers.NewAuthHandler(database, jwtService, telegramAuthService)
 	profileHandler := handlers.NewProfileHandler(database)
 	mapHandler := handlers.NewMapHandler(database)
-	// taskHandler := handlers.NewTaskHandler(database)
 	scooterStatsHandler := handlers.NewScooterStatsHandler("/root/tg_bot/Sharing/scooters.db")
 	appVersionHandler := handlers.NewAppVersionHandler(database)
 
@@ -87,7 +80,6 @@ func main() {
 		})
 	})
 
-	// Публичные маршруты
 	router.Post("/api/auth/register", authHandler.RegisterHandler)
 	router.Post("/api/auth/login", authHandler.LoginHandler)
 	router.Post("/api/auth/telegram", authHandler.TelegramAuthHandler)
@@ -102,7 +94,6 @@ func main() {
 		handlers.RespondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Защищённые маршруты
 	router.Group(func(r chi.Router) {
 		r.Use(jwtauth.Authenticator(jwtAuth))
 
@@ -129,14 +120,9 @@ func main() {
 		r.Get("/api/admin/maps/{mapID}", mapHandler.GetMapByIDHandler)
 		r.Get("/api/admin/maps/files/{filename}", mapHandler.ServeMapFileHandler)
 
-		// r.Get("/api/admin/tasks", taskHandler.GetTasksHandler)
-		// r.Get("/api/admin/tasks/files/{filename}", taskHandler.ServeTaskFileHandler)
-		// r.Get("/api/my/tasks", taskHandler.GetMyTasksHandler)
-
 		r.Post("/api/app/version/check", appVersionHandler.CheckVersionHandler)
 		r.Get("/api/app/version/latest", appVersionHandler.GetLatestVersionHandler)
 
-		// Админка
 		r.Group(func(r chi.Router) {
 			r.Use(superadminOnlyMiddleware(jwtService))
 
@@ -157,10 +143,6 @@ func main() {
 			r.Put("/api/admin/zones/{id}", handlers.UpdateZoneHandler(database))
 			r.Delete("/api/admin/zones/{id}", handlers.DeleteZoneHandler(database))
 
-			// r.Post("/api/admin/tasks", taskHandler.CreateTaskHandler)
-			// r.Patch("/api/admin/tasks/{taskID}/status", taskHandler.UpdateTaskStatusHandler)
-			// r.Delete("/api/admin/tasks/{taskID}", taskHandler.DeleteTaskHandler)
-
 			r.Get("/api/admin/app/versions", appVersionHandler.ListVersionsHandler)
 			r.Post("/api/admin/app/versions", appVersionHandler.CreateVersionHandler)
 			r.Put("/api/admin/app/versions/{id}", appVersionHandler.UpdateVersionHandler)
@@ -173,6 +155,26 @@ func main() {
 	if err := ensureUploadDirs(); err != nil {
 		log.Fatalf("Failed to create upload directories: %v", err)
 	}
+
+	go func() {
+		log.Println("✅ Background job: Auto-ending expired shifts every minute")
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+
+		if count, err := handlers.AutoEndShifts(database); err != nil {
+			log.Printf("❌ AutoEndShifts failed on startup: %v", err)
+		} else {
+			log.Printf("✅ AutoEndShifts (startup): ended %d slots", count)
+		}
+
+		for range ticker.C {
+			if count, err := handlers.AutoEndShifts(database); err != nil {
+				log.Printf("❌ AutoEndShifts failed: %v", err)
+			} else if count > 0 {
+				log.Printf("✅ AutoEndShifts: ended %d expired slots", count)
+			}
+		}
+	}()
 
 	serverAddress := fmt.Sprintf(":%s", cfg.ServerPort)
 	log.Printf("🚀 Server starting on %s", serverAddress)

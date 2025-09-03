@@ -1,4 +1,3 @@
-// handlers/auto_end_shifts_handler.go
 package handlers
 
 import (
@@ -8,63 +7,71 @@ import (
 	"time"
 )
 
+func AutoEndShifts(db *sql.DB) (int, error) {
+	query := `
+		SELECT s.id, s.user_id, s.slot_time_range, s.start_time 
+		FROM slots s
+		WHERE s.end_time IS NULL
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		log.Printf("DB query error (active slots): %v", err)
+		return 0, err
+	}
+	defer rows.Close()
+
+	var toEnd []struct {
+		ID     int
+		UserID int
+	}
+
+	for rows.Next() {
+		var id, userID int
+		var slotTimeRange string
+		var startTime time.Time
+
+		if err := rows.Scan(&id, &userID, &slotTimeRange, &startTime); err != nil {
+			log.Printf("Error scanning active slot: %v", err)
+			continue
+		}
+
+		slotTimeRange = NormalizeSlot(slotTimeRange)
+
+		endTime, err := getEndTimeFromSlot(slotTimeRange)
+		if err != nil {
+			log.Printf("Invalid slot time range '%s': %v", slotTimeRange, err)
+			continue
+		}
+
+		if time.Now().After(endTime) {
+			toEnd = append(toEnd, struct{ ID, UserID int }{ID: id, UserID: userID})
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		log.Printf("Row iteration error: %v", err)
+		return 0, err
+	}
+
+	endedCount := 0
+	for _, slot := range toEnd {
+		if err := endSlot(db, slot.ID, slot.UserID); err != nil {
+			log.Printf("Failed to auto-end slot ID %d: %v", slot.ID, err)
+		} else {
+			endedCount++
+		}
+	}
+
+	return endedCount, nil
+}
+
 func AutoEndShiftsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		query := `
-			SELECT s.id, s.user_id, s.slot_time_range, s.start_time 
-			FROM slots s
-			WHERE s.end_time IS NULL
-		`
-
-		rows, err := db.Query(query)
+		endedCount, err := AutoEndShifts(db)
 		if err != nil {
-			log.Printf("DB query error (active slots): %v", err)
-			RespondWithError(w, http.StatusInternalServerError, "Database error")
+			RespondWithError(w, http.StatusInternalServerError, "Failed to process auto-end shifts")
 			return
-		}
-		defer rows.Close()
-
-		var toEnd []struct {
-			ID     int
-			UserID int
-		}
-
-		for rows.Next() {
-			var id, userID int
-			var slotTimeRange string
-			var startTime time.Time
-
-			if err := rows.Scan(&id, &userID, &slotTimeRange, &startTime); err != nil {
-				log.Printf("Error scanning active slot: %v", err)
-				continue
-			}
-
-			slotTimeRange = NormalizeSlot(slotTimeRange) // ✅ без handlers.
-
-			endTime, err := getEndTimeFromSlot(slotTimeRange)
-			if err != nil {
-				log.Printf("Invalid slot time range '%s': %v", slotTimeRange, err)
-				continue
-			}
-
-			if time.Now().After(endTime) {
-				toEnd = append(toEnd, struct{ ID, UserID int }{ID: id, UserID: userID})
-			}
-		}
-
-		if err = rows.Err(); err != nil {
-			log.Printf("Row iteration error: %v", err)
-			RespondWithError(w, http.StatusInternalServerError, "Database error")
-			return
-		}
-
-		endedCount := 0
-		for _, slot := range toEnd {
-			if err := endSlot(db, slot.ID, slot.UserID); err != nil {
-				log.Printf("Failed to auto-end slot ID %d: %v", slot.ID, err)
-			} else {
-				endedCount++
-			}
 		}
 
 		RespondWithJSON(w, http.StatusOK, map[string]interface{}{
