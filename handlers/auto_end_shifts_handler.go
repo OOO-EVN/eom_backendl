@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+// Алматы = UTC+5
+var almatyLoc = time.FixedZone("Almaty", 5*60*60) // UTC+5
+
+// AutoEndShifts — фоновая функция: закрывает просроченные смены
 func AutoEndShifts(db *sql.DB) (int, error) {
 	query := `
 		SELECT s.id, s.user_id, s.slot_time_range, s.start_time 
@@ -38,14 +42,14 @@ func AutoEndShifts(db *sql.DB) (int, error) {
 		}
 
 		slotTimeRange = NormalizeSlot(slotTimeRange)
-
 		endTime, err := getEndTimeFromSlot(slotTimeRange)
 		if err != nil {
 			log.Printf("Invalid slot time range '%s': %v", slotTimeRange, err)
 			continue
 		}
 
-		if time.Now().After(endTime) {
+		// Проверяем: если текущее время (в UTC+5) больше времени окончания — закрываем
+		if time.Now().In(almatyLoc).After(endTime) {
 			toEnd = append(toEnd, struct{ ID, UserID int }{ID: id, UserID: userID})
 		}
 	}
@@ -67,6 +71,7 @@ func AutoEndShifts(db *sql.DB) (int, error) {
 	return endedCount, nil
 }
 
+// AutoEndShiftsHandler — HTTP-эндпоинт для ручного вызова
 func AutoEndShiftsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		endedCount, err := AutoEndShifts(db)
@@ -78,26 +83,29 @@ func AutoEndShiftsHandler(db *sql.DB) http.HandlerFunc {
 		RespondWithJSON(w, http.StatusOK, map[string]interface{}{
 			"message":      "Auto-end shifts completed",
 			"slots_ended":  endedCount,
-			"processed_at": time.Now().Format(time.RFC3339),
+			"processed_at": time.Now().In(almatyLoc).Format(time.RFC3339),
 		})
 	}
 }
 
+// getEndTimeFromSlot — возвращает фиксированное время окончания в часовом поясе Алматы
 func getEndTimeFromSlot(slotTimeRange string) (time.Time, error) {
-	now := time.Now()
-	dateStr := now.Format("2006-01-02")
+	nowAlmaty := time.Now().In(almatyLoc)
+	dateStr := nowAlmaty.Format("2006-01-02")
 
-	switch slotTimeRange {
-	case "07:00–15:00", "07:00-15:00":
-		return time.Parse("2006-01-02 15:04", dateStr+" 15:00")
-	case "15:00–23:00", "15:00-23:00":
-		return time.Parse("2006-01-02 15:04", dateStr+" 23:00")
-	case "07:00–23:00", "07:00-23:00":
-		return time.Parse("2006-01-02 15:04", dateStr+" 23:00")
+	switch NormalizeSlot(slotTimeRange) {
+	case "07:00-15:00":
+		return time.ParseInLocation("2006-01-02 15:04", dateStr+" 15:00", almatyLoc)
+	case "15:00-23:00":
+		return time.ParseInLocation("2006-01-02 15:04", dateStr+" 23:00", almatyLoc)
+	case "07:00-23:00":
+		return time.ParseInLocation("2006-01-02 15:04", dateStr+" 23:00", almatyLoc)
 	default:
 		return time.Time{}, fmt.Errorf("invalid slot time range: %s", slotTimeRange)
 	}
 }
+
+// endSlot — завершает смену, записывает end_time и worked_duration
 func endSlot(db *sql.DB, slotID, userID int) error {
 	var startTime time.Time
 	err := db.QueryRow("SELECT start_time FROM slots WHERE id = ? AND end_time IS NULL", slotID).Scan(&startTime)
@@ -107,7 +115,7 @@ func endSlot(db *sql.DB, slotID, userID int) error {
 		return err
 	}
 
-	endTime := time.Now()
+	endTime := time.Now().In(almatyLoc)
 	duration := int(endTime.Sub(startTime).Seconds())
 
 	_, err = db.Exec("UPDATE slots SET end_time = ?, worked_duration = ? WHERE id = ?", endTime, duration, slotID)
