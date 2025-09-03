@@ -28,9 +28,9 @@ func main() {
 	if err := handlers.CreateMapsTable(database); err != nil {
 		log.Fatalf("Failed to create maps table: %v", err)
 	}
-	if err := handlers.CreateTasksTable(database); err != nil {
-		log.Fatalf("Failed to create tasks table: %v", err)
-	}
+	// if err := handlers.CreateTasksTable(database); err != nil {
+	// 	log.Fatalf("Failed to create tasks table: %v", err)
+	// }
 	if err := createAppVersionsTable(database); err != nil {
 		log.Fatalf("Failed to create app versions table: %v", err)
 	}
@@ -50,7 +50,7 @@ func main() {
 	authHandler := handlers.NewAuthHandler(database, jwtService, telegramAuthService)
 	profileHandler := handlers.NewProfileHandler(database)
 	mapHandler := handlers.NewMapHandler(database)
-	taskHandler := handlers.NewTaskHandler(database)
+	// taskHandler := handlers.NewTaskHandler(database)
 	scooterStatsHandler := handlers.NewScooterStatsHandler("/root/tg_bot/Sharing/scooters.db")
 	appVersionHandler := handlers.NewAppVersionHandler(database)
 
@@ -129,9 +129,9 @@ func main() {
 		r.Get("/api/admin/maps/{mapID}", mapHandler.GetMapByIDHandler)
 		r.Get("/api/admin/maps/files/{filename}", mapHandler.ServeMapFileHandler)
 
-		r.Get("/api/admin/tasks", taskHandler.GetTasksHandler)
-		r.Get("/api/admin/tasks/files/{filename}", taskHandler.ServeTaskFileHandler)
-		r.Get("/api/my/tasks", taskHandler.GetMyTasksHandler)
+		// r.Get("/api/admin/tasks", taskHandler.GetTasksHandler)
+		// r.Get("/api/admin/tasks/files/{filename}", taskHandler.ServeTaskFileHandler)
+		// r.Get("/api/my/tasks", taskHandler.GetMyTasksHandler)
 
 		r.Post("/api/app/version/check", appVersionHandler.CheckVersionHandler)
 		r.Get("/api/app/version/latest", appVersionHandler.GetLatestVersionHandler)
@@ -157,9 +157,9 @@ func main() {
 			r.Put("/api/admin/zones/{id}", handlers.UpdateZoneHandler(database))
 			r.Delete("/api/admin/zones/{id}", handlers.DeleteZoneHandler(database))
 
-			r.Post("/api/admin/tasks", taskHandler.CreateTaskHandler)
-			r.Patch("/api/admin/tasks/{taskID}/status", taskHandler.UpdateTaskStatusHandler)
-			r.Delete("/api/admin/tasks/{taskID}", taskHandler.DeleteTaskHandler)
+			// r.Post("/api/admin/tasks", taskHandler.CreateTaskHandler)
+			// r.Patch("/api/admin/tasks/{taskID}/status", taskHandler.UpdateTaskStatusHandler)
+			// r.Delete("/api/admin/tasks/{taskID}", taskHandler.DeleteTaskHandler)
 
 			r.Get("/api/admin/app/versions", appVersionHandler.ListVersionsHandler)
 			r.Post("/api/admin/app/versions", appVersionHandler.CreateVersionHandler)

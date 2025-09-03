@@ -487,10 +487,10 @@ func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Обновляем данные пользователя и устанавливаем статус 'pending' и is_active = 0
+	// ИСПРАВЛЕНО: используем FALSE вместо 0 для boolean поля
 	_, err := h.db.Exec(`
 			UPDATE users 
-			SET first_name = ?, last_name = ?, phone = ?, status = 'pending', is_active = 0
+			SET first_name = ?, last_name = ?, phone = ?, status = 'pending', is_active = FALSE
 			WHERE id = ?`,
 		regData.FirstName,
 		regData.LastName,
@@ -505,19 +505,17 @@ func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http
 
 	log.Printf("User %d completed registration and is now pending approval", userID)
 
-	// --- Добавлено: Получаем обновленные данные пользователя ---
+	// Получаем обновленные данные пользователя
 	var updatedUser struct {
 		Status   string `json:"status"`
-		IsActive int    `json:"is_active"`
+		IsActive bool   `json:"is_active"`
 	}
 	err = h.db.QueryRow("SELECT status, is_active FROM users WHERE id = ?", userID).Scan(&updatedUser.Status, &updatedUser.IsActive)
 	if err != nil {
 		log.Printf("Database error fetching updated user %d: %v", userID, err)
-		// Не критично, можно продолжить
 		updatedUser.Status = "pending"
-		updatedUser.IsActive = 0
+		updatedUser.IsActive = false
 	}
-	// --- Конец добавления ---
 
 	// Отправляем обновленный статус в ответе
 	RespondWithJSON(w, http.StatusOK, map[string]interface{}{

@@ -55,8 +55,8 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		Role       string
 		AvatarURL  sql.NullString
 		Zone       sql.NullString
-		Status     string // ДОБАВЛЕНО
-		IsActive   int    // ДОБАВЛЕНО
+		Status     string
+		IsActive   bool // ИЗМЕНЕНО: с int на bool
 	}
 
 	// Обновленный запрос с полями status и is_active
@@ -71,16 +71,12 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		&user.Role,
 		&user.AvatarURL,
 		&user.Zone,
-		&user.Status,   // ДОБАВЛЕНО
-		&user.IsActive, // ДОБАВЛЕНО
+		&user.Status,
+		&user.IsActive, // ИЗМЕНЕНО: теперь bool
 	)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
-			RespondWithError(w, http.StatusNotFound, "User not found")
-		} else {
-			RespondWithError(w, http.StatusInternalServerError, "Database error: "+err.Error())
-		}
+		RespondWithError(w, http.StatusInternalServerError, "Database error: "+err.Error())
 		return
 	}
 
@@ -114,7 +110,7 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	if user.Zone.Valid && user.Zone.String != "" {
 		finalZone = user.Zone.String
 	} else {
-		finalZone = "Almaty"
+		finalZone = "Центр"
 	}
 
 	// Возвращаем полный профиль с статусом
@@ -127,8 +123,8 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		"avatarUrl":  finalAvatarURL,
 		"position":   position,
 		"zone":       finalZone,
-		"status":     user.Status,   // ДОБАВЛЕНО
-		"is_active":  user.IsActive, // ДОБАВЛЕНО
+		"status":     user.Status,
+		"is_active":  user.IsActive, // ИЗМЕНЕНО: теперь bool
 	})
 }
 
