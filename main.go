@@ -107,6 +107,7 @@ func main() {
 		r.Post("/api/slot/end", handlers.EndSlotHandler(database))
 		r.Get("/api/shifts/active", handlers.GetUserActiveShiftHandler(database))
 		r.Get("/api/shifts", handlers.GetShiftsHandler(database))
+r.Get("/api/shifts/date/{date}", handlers.GetShiftsByDateHandler(database))
 		r.Get("/api/users/{userID}/shifts", handlers.GetUserShiftsByIDHandler(database))
 
 		r.Get("/api/slots/positions", handlers.GetAvailablePositionsHandler(database))

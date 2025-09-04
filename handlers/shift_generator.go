@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/go-chi/chi/v5" // ✅ Добавь этот импорт!
 )
 
 type GenerateShiftsRequest struct {
@@ -133,4 +135,84 @@ func createSlot(tx *sql.Tx, userID int, date time.Time, slotTime string) error {
 		VALUES (?, ?, ?, 'Скаут', 'Центр', '')
 	`, userID, date.Format("2006-01-02 07:00:00"), slotTime)
 	return err
+}
+
+// ✅ Обработчик: получить смены по дате
+func GetShiftsByDateHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dateStr := chi.URLParam(r, "date") // ✅ Теперь chi доступен
+		if dateStr == "" {
+			RespondWithError(w, http.StatusBadRequest, "Date is required")
+			return
+		}
+
+		// Проверка формата даты
+		_, err := time.Parse("2006-01-02", dateStr)
+		if err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid date format, expected YYYY-MM-DD")
+			return
+		}
+
+		query := `
+			SELECT 
+				s.id,
+				s.user_id,
+				u.username,
+				u.first_name,
+				s.start_time,
+				s.slot_time_range,
+				s.position,
+				s.zone,
+				s.selfie_path,
+				s.end_time
+			FROM slots s
+			JOIN users u ON s.user_id = u.id
+			WHERE DATE(s.start_time) = ?
+			ORDER BY s.start_time
+		`
+
+		rows, err := db.Query(query, dateStr)
+		if err != nil {
+			log.Printf("Error querying shifts for date %s: %v", dateStr, err)
+			RespondWithError(w, http.StatusInternalServerError, "Database error")
+			return
+		}
+		defer rows.Close()
+
+		var shifts []map[string]interface{}
+		for rows.Next() {
+			var id, userID int
+			var username, firstName, startTime, slotTimeRange, position, zone, selfie, endTime sql.NullString
+			if err := rows.Scan(&id, &userID, &username, &firstName, &startTime, &slotTimeRange, &position, &zone, &selfie, &endTime); err != nil {
+				log.Printf("Error scanning shift row: %v", err)
+				continue
+			}
+
+			shift := map[string]interface{}{
+				"id":              id,
+				"user_id":         userID,
+				"username":        username.String,
+				"first_name":      firstName.String,
+				"start_time":      startTime.String,
+				"shift_type":      getShiftTypeFromTimeRange(slotTimeRange.String),
+				"position":        position.String,
+				"zone":            zone.String,
+				"selfie":          selfie.String,
+				"end_time":        endTime.String,
+			}
+			shifts = append(shifts, shift)
+		}
+
+		RespondWithJSON(w, http.StatusOK, shifts)
+	}
+}
+
+// Вспомогательная функция: определяет тип смены по временному диапазону
+func getShiftTypeFromTimeRange(timeRange string) string {
+	if strings.Contains(timeRange, "07:00") {
+		return "morning"
+	} else if strings.Contains(timeRange, "15:00") {
+		return "evening"
+	}
+	return "unknown"
 }
