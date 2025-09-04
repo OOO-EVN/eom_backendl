@@ -50,13 +50,13 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	var user struct {
 		ID         int
 		Username   string
-		FirstName  string
+		FirstName  sql.NullString  // ИСПРАВЛЕНО: изменено на sql.NullString
 		TelegramID sql.NullInt64
 		Role       string
 		AvatarURL  sql.NullString
 		Zone       sql.NullString
 		Status     string
-		IsActive   bool // ИЗМЕНЕНО: с int на bool
+		IsActive   bool
 	}
 
 	// Обновленный запрос с полями status и is_active
@@ -66,18 +66,24 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		WHERE id = ?`, userID).Scan(
 		&user.ID,
 		&user.Username,
-		&user.FirstName,
+		&user.FirstName,  // Теперь сканируется в sql.NullString
 		&user.TelegramID,
 		&user.Role,
 		&user.AvatarURL,
 		&user.Zone,
 		&user.Status,
-		&user.IsActive, // ИЗМЕНЕНО: теперь bool
+		&user.IsActive,
 	)
 
 	if err != nil {
 		RespondWithError(w, http.StatusInternalServerError, "Database error: "+err.Error())
 		return
+	}
+
+	// Преобразуем NULL в пустую строку для FirstName
+	firstName := ""
+	if user.FirstName.Valid {
+		firstName = user.FirstName.String
 	}
 
 	// Логика определения должности
@@ -117,14 +123,14 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	RespondWithJSON(w, http.StatusOK, map[string]interface{}{
 		"id":         user.ID,
 		"username":   user.Username,
-		"firstName":  user.FirstName,
+		"firstName":  firstName,  // Используем преобразованное значение
 		"telegramId": nullInt64ToInterface(user.TelegramID),
 		"role":       user.Role,
 		"avatarUrl":  finalAvatarURL,
 		"position":   position,
 		"zone":       finalZone,
 		"status":     user.Status,
-		"is_active":  user.IsActive, // ИЗМЕНЕНО: теперь bool
+		"is_active":  user.IsActive,
 	})
 }
 
