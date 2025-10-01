@@ -358,7 +358,7 @@ func (h *AuthHandler) TelegramAuthCallbackHandler(w http.ResponseWriter, r *http
 	}
 
 	resp, err := http.Post(
-		"https://eom-sharing.duckdns.org/api/auth/telegram",
+		"https://start.eom.kz/api/auth/telegram",
 		"application/json",
 		strings.NewReader(string(jsonData)),
 	)
@@ -388,7 +388,7 @@ func (h *AuthHandler) TelegramAuthCallbackHandler(w http.ResponseWriter, r *http
 			<head>
 				<title>Auth Success</title>
 				<script>
-					window.location.href = "https://eom-sharing.duckdns.org/api/auth/telegram-success?token=%s";
+					window.location.href = "https://start.eom.kz/api/auth/telegram-success?token=%s";
 				</script>
 			</head>
 			<body>
