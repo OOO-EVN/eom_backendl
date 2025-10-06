@@ -200,7 +200,7 @@ func (h *AppVersionHandler) isSuperAdmin(r *http.Request) bool {
 // Вспомогательная функция для получения роли пользователя
 func (h *AppVersionHandler) getUserRole(userID int) string {
     var role string
-    err := h.db.QueryRow("SELECT role FROM users WHERE id = ?", userID).Scan(&role)
+    err := h.db.QueryRow("SELECT role FROM users WHERE id = $1", userID).Scan(&role)
     if err != nil {
         return "user"
     }

@@ -1,30 +1,32 @@
+// db/database.go
 package db
 
 import (
     "database/sql"
-    _ "github.com/mattn/go-sqlite3"
+    _ "github.com/lib/pq" // ← важно: нижнее подчёркивание!
     "log"
-    "os" // Добавьте os
+    "os"
 )
 
-// InitDB инициализирует соединение с базой данных и создает таблицы
+// InitDB инициализирует соединение с базой данных и создаёт таблицы
 func InitDB(dsn string) *sql.DB {
-    log.Println("Попытка открыть базу данных по пути:", dsn)
-    db, err := sql.Open("sqlite3", dsn)
+    log.Println("Попытка подключения к PostgreSQL по DSN:", dsn)
+    db, err := sql.Open("postgres", dsn)
     if err != nil {
-        log.Fatalf("Ошибка при открытии базы данных: %v", err)
+        log.Fatalf("Ошибка при открытии подключения к PostgreSQL: %v", err)
     }
 
     if err = db.Ping(); err != nil {
-        log.Fatalf("Ошибка при подключении к базе данных: %v", err)
+        log.Fatalf("Ошибка при пинге PostgreSQL: %v", err)
     }
-    log.Println("Успешное подключение к базе данных.")
+    log.Println("Успешное подключение к PostgreSQL.")
 
-    createTable(db) // Убедимся, что createTable() тоже содержит логирование
+    createTable(db)
     log.Println("База данных успешно инициализирована.")
     return db
 }
 
+// createTable читает schema.sql и применяет его
 func createTable(db *sql.DB) {
     log.Println("Чтение файла схемы db/schema.sql...")
     schema, err := os.ReadFile("db/schema.sql")
@@ -37,5 +39,5 @@ func createTable(db *sql.DB) {
     if err != nil {
         log.Fatalf("Не удалось создать таблицы: %v", err)
     }
-    log.Println("Таблицы успешно созданы (если не существовали).")
+    log.Println("Таблицы успешно созданы.")
 }

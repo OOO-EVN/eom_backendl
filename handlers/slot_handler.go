@@ -46,7 +46,7 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
         }
 
         var activeCount int
-        err := db.QueryRow("SELECT COUNT(*) FROM slots WHERE user_id = ? AND end_time IS NULL", userID).Scan(&activeCount)
+        err := db.QueryRow("SELECT COUNT(*) FROM slots WHERE user_id = $1 AND end_time IS NULL", userID).Scan(&activeCount)
         if err != nil {
             RespondWithError(w, http.StatusInternalServerError, "Database error")
             return
@@ -57,7 +57,7 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
         }
 
         var position string
-        err = db.QueryRow("SELECT role FROM users WHERE id = ?", userID).Scan(&position)
+        err = db.QueryRow("SELECT role FROM users WHERE id = $1", userID).Scan(&position)
         if err != nil {
             position = "user"
         }
@@ -99,7 +99,7 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
 
         // Проверяем, существует ли зона
         var zoneExists int
-        err = db.QueryRow("SELECT COUNT(*) FROM zones WHERE name = ?", zone).Scan(&zoneExists)
+        err = db.QueryRow("SELECT COUNT(*) FROM zones WHERE name = $1", zone).Scan(&zoneExists)
         if err != nil || zoneExists == 0 {
             RespondWithError(w, http.StatusBadRequest, "Invalid zone: "+zone)
             return
@@ -107,7 +107,7 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
 
         // Проверяем, существует ли временной слот
         var slotExists int
-        err = db.QueryRow("SELECT COUNT(*) FROM available_time_slots WHERE slot_time_range = ?", slotTimeRange).Scan(&slotExists)
+        err = db.QueryRow("SELECT COUNT(*) FROM available_time_slots WHERE slot_time_range = $1", slotTimeRange).Scan(&slotExists)
         if err != nil || slotExists == 0 {
             RespondWithError(w, http.StatusBadRequest, "Invalid time slot: "+slotTimeRange)
             return

@@ -53,7 +53,7 @@ func (h *AuthHandler) RefreshTokenHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	var username, role string
-	err = h.db.QueryRow("SELECT username, role FROM users WHERE id = ?", userID).Scan(&username, &role)
+	err = h.db.QueryRow("SELECT username, role FROM users WHERE id = $1", userID).Scan(&username, &role)
 	if err != nil {
 		RespondWithError(w, http.StatusInternalServerError, "User not found")
 		return
@@ -84,7 +84,7 @@ func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var count int
-	err := h.db.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", regData.Username).Scan(&count)
+	err := h.db.QueryRow("SELECT COUNT(*) FROM users WHERE username = $1", regData.Username).Scan(&count)
 	if err != nil {
 		RespondWithError(w, http.StatusInternalServerError, "Database error")
 		return
@@ -103,7 +103,7 @@ func (h *AuthHandler) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 
 	_, err = h.db.Exec(`
 			INSERT INTO users (username, first_name, password_hash, role)
-			VALUES (?, ?, ?, 'user')`,
+			VALUES ($1, $2, $3, 'user')`,
 		regData.Username,
 		regData.FirstName,
 		passwordHash,
@@ -141,7 +141,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	row := h.db.QueryRow(`
 			SELECT id, username, password_hash, role, status
 			FROM users
-			WHERE username = ? COLLATE NOCASE`,
+			WHERE LOWER(username) = LOWER($1)`,
 		loginData.Username,
 	)
 
@@ -220,7 +220,7 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 	err = h.db.QueryRow(`
 			SELECT id, username, first_name, telegram_id, role, status
 			FROM users
-			WHERE telegram_id = ?`,
+			WHERE telegram_id = $1`,
 		tgID,
 	).Scan(&user.ID, &user.Username, &user.FirstName, &user.TelegramID, &user.Role, &user.Status)
 
@@ -239,7 +239,7 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		err = h.db.QueryRow(`
 				SELECT id, username, first_name, telegram_id, role, status
 				FROM users
-				WHERE username = ? COLLATE NOCASE`,
+				WHERE LOWER(username) = LOWER($1)`,
 			tgUsername,
 		).Scan(&user.ID, &user.Username, &user.FirstName, &user.TelegramID, &user.Role, &user.Status)
 

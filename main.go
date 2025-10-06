@@ -24,12 +24,7 @@ func main() {
 	database := db.InitDB(cfg.DatabaseDSN)
 	defer database.Close()
 
-	if err := handlers.CreateMapsTable(database); err != nil {
-		log.Fatalf("Failed to create maps table: %v", err)
-	}
-	if err := createAppVersionsTable(database); err != nil {
-		log.Fatalf("Failed to create app versions table: %v", err)
-	}
+
 
 	redisClient := config.NewRedisClient()
 	defer redisClient.Close()
@@ -208,7 +203,7 @@ func ensureUploadDirs() error {
 	dirs := []string{
 		"./uploads/selfies",
 		"./uploads/maps",
-		"./uploads/tasks",
+		// "./uploads/tasks",
 		"./uploads/app",
 	}
 	for _, dir := range dirs {
@@ -256,33 +251,3 @@ func GetActiveShiftsForAll(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func createAppVersionsTable(db *sql.DB) error {
-	query := `
-	CREATE TABLE IF NOT EXISTS app_versions (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		platform TEXT NOT NULL,
-		version TEXT NOT NULL,
-		build_number INTEGER NOT NULL,
-		release_notes TEXT,
-		download_url TEXT NOT NULL,
-		min_sdk_version INTEGER DEFAULT 0,
-		is_mandatory BOOLEAN DEFAULT FALSE,
-		is_active BOOLEAN DEFAULT TRUE,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_app_versions_platform_version ON app_versions(platform, version);
-	CREATE INDEX IF NOT EXISTS idx_app_versions_active ON app_versions(is_active);
-	CREATE INDEX IF NOT EXISTS idx_app_versions_build ON app_versions(build_number);
-
-	DELETE FROM app_versions WHERE platform = 'android' OR platform = 'ios';
-
-	INSERT INTO app_versions (platform, version, build_number, release_notes, download_url, is_mandatory, is_active) VALUES
-	('android', '1.0.0', 100, 'Первый релиз приложения', 'https://eom-sharing.duckdns.org/uploads/app/app-release.apk', FALSE, TRUE),
-	('ios', '1.0.0', 100, 'Первый релиз приложения', 'https://eom-sharing.duckdns.org/uploads/app/app-release.ipa', FALSE, TRUE);
-	`
-
-	_, err := db.Exec(query)
-	return err
-}

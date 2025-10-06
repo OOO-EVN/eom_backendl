@@ -3,11 +3,12 @@ package repositories
 import (
     "database/sql"
     "fmt"
+    // "time"
     "github.com/evn/eom_backendl/models"
 )
 
 type AppVersionRepository struct {
-    DB *sql.DB  // Сделали поле публичным
+    DB *sql.DB
 }
 
 func NewAppVersionRepository(db *sql.DB) *AppVersionRepository {
@@ -20,7 +21,7 @@ func (r *AppVersionRepository) GetLatestVersion(platform string) (*models.AppVer
         SELECT id, platform, version, build_number, release_notes, download_url, 
                min_sdk_version, is_mandatory, is_active, created_at, updated_at
         FROM app_versions 
-        WHERE platform = ? AND is_active = TRUE 
+        WHERE platform = $1 AND is_active = TRUE 
         ORDER BY build_number DESC 
         LIMIT 1
     `
@@ -49,8 +50,7 @@ func (r *AppVersionRepository) GetLatestVersion(platform string) (*models.AppVer
     
     return &version, nil
 }
-
-// CheckVersion проверяет, есть ли новая версия
+// CheckVersion проверяет, доступна ли новая версия
 func (r *AppVersionRepository) CheckVersion(platform, currentVersion string, buildNumber int) (*models.VersionCheckResponse, error) {
     latestVersion, err := r.GetLatestVersion(platform)
     if err != nil {
@@ -67,7 +67,6 @@ func (r *AppVersionRepository) CheckVersion(platform, currentVersion string, bui
     response := &models.VersionCheckResponse{
         HasUpdate:     hasUpdate,
         IsMandatory:   isMandatory,
-        Message:       "",
     }
     
     if hasUpdate {
@@ -83,14 +82,13 @@ func (r *AppVersionRepository) CheckVersion(platform, currentVersion string, bui
     
     return response, nil
 }
-
 // GetAllVersions получает все версии для платформы
 func (r *AppVersionRepository) GetAllVersions(platform string) ([]models.AppVersion, error) {
     query := `
         SELECT id, platform, version, build_number, release_notes, download_url, 
                min_sdk_version, is_mandatory, is_active, created_at, updated_at
         FROM app_versions 
-        WHERE platform = ? 
+        WHERE platform = $1 
         ORDER BY build_number DESC
     `
     
@@ -129,11 +127,13 @@ func (r *AppVersionRepository) GetAllVersions(platform string) ([]models.AppVers
 func (r *AppVersionRepository) CreateVersion(version *models.AppVersion) error {
     query := `
         INSERT INTO app_versions 
-        (platform, version, build_number, release_notes, download_url, min_sdk_version, is_mandatory, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (platform, version, build_number, release_notes, download_url, min_sdk_version, is_mandatory, is_active, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+        RETURNING id
     `
     
-    result, err := r.DB.Exec(
+    // Используем QueryRow для получения id сразу
+    err := r.DB.QueryRow(
         query,
         version.Platform,
         version.Version,
@@ -143,17 +143,12 @@ func (r *AppVersionRepository) CreateVersion(version *models.AppVersion) error {
         version.MinSDKVersion,
         version.IsMandatory,
         version.IsActive,
-    )
+    ).Scan(&version.ID)
+    
     if err != nil {
         return fmt.Errorf("failed to create version: %w", err)
     }
     
-    id, err := result.LastInsertId()
-    if err != nil {
-        return fmt.Errorf("failed to get inserted id: %w", err)
-    }
-    
-    version.ID = int(id)
     return nil
 }
 
@@ -161,9 +156,9 @@ func (r *AppVersionRepository) CreateVersion(version *models.AppVersion) error {
 func (r *AppVersionRepository) UpdateVersion(version *models.AppVersion) error {
     query := `
         UPDATE app_versions 
-        SET platform = ?, version = ?, build_number = ?, release_notes = ?, 
-            download_url = ?, min_sdk_version = ?, is_mandatory = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        SET platform = $1, version = $2, build_number = $3, release_notes = $4, 
+            download_url = $5, min_sdk_version = $6, is_mandatory = $7, is_active = $8, updated_at = NOW()
+        WHERE id = $9
     `
     
     _, err := r.DB.Exec(
@@ -187,10 +182,10 @@ func (r *AppVersionRepository) UpdateVersion(version *models.AppVersion) error {
 
 // DeleteVersion удаляет версию
 func (r *AppVersionRepository) DeleteVersion(id int) error {
-    query := `DELETE FROM app_versions WHERE id = ?`
+    query := `DELETE FROM app_versions WHERE id = $1`
     _, err := r.DB.Exec(query, id)
     if err != nil {
         return fmt.Errorf("failed to delete version: %w", err)
     }
     return nil
-}
+}   

@@ -283,16 +283,16 @@ func getNextID(db *sql.DB) int {
 
 // CreateMapsTable создает таблицу для хранения информации о картах
 func CreateMapsTable(db *sql.DB) error {
-	query := `
-	CREATE TABLE IF NOT EXISTS maps (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		city TEXT NOT NULL,
-		description TEXT,
-		file_name TEXT NOT NULL,
-		file_size INTEGER NOT NULL,
-		upload_date DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-	`
-	_, err := db.Exec(query)
-	return err
+    query := `
+    CREATE TABLE IF NOT EXISTS maps (
+        id SERIAL PRIMARY KEY,
+        city TEXT NOT NULL,
+        description TEXT,
+        file_name TEXT NOT NULL,
+        file_size BIGINT NOT NULL,
+        upload_date TIMESTAMP WITH TIME ZONE DEFAULT NOW()  
+    );
+    `
+    _, err := db.Exec(query)
+    return err
 }
