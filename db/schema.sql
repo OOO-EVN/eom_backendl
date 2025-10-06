@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS users (
     first_name TEXT,
     telegram_id BIGINT UNIQUE,
     role TEXT NOT NULL DEFAULT 'user',
-    status TEXT DEFAULT 'active',       
+    status TEXT DEFAULT 'active',      
+    is_active BOOLEAN DEFAULT TRUE,  
     avatar_url TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

@@ -1,7 +1,9 @@
+// handlers/profile.go
 package handlers
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -23,7 +25,6 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Получаем user_id из claims
 	var userID int
 	if rawID, ok := claims["user_id"]; ok {
 		switch v := rawID.(type) {
@@ -50,7 +51,7 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	var user struct {
 		ID         int
 		Username   string
-		FirstName  sql.NullString  // ИСПРАВЛЕНО: изменено на sql.NullString
+		FirstName  sql.NullString
 		TelegramID sql.NullInt64
 		Role       string
 		AvatarURL  sql.NullString
@@ -59,14 +60,13 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		IsActive   bool
 	}
 
-	// Обновленный запрос с полями status и is_active
 	err = h.db.QueryRow(`
 		SELECT id, username, first_name, telegram_id, role, avatar_url, zone, status, is_active
 		FROM users
-		WHERE id = ?`, userID).Scan(
+		WHERE id = $1`, userID).Scan(
 		&user.ID,
 		&user.Username,
-		&user.FirstName,  // Теперь сканируется в sql.NullString
+		&user.FirstName,
 		&user.TelegramID,
 		&user.Role,
 		&user.AvatarURL,
@@ -76,17 +76,16 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		RespondWithError(w, http.StatusInternalServerError, "Database error: "+err.Error())
+		log.Printf("Database error in GetProfile (user %d): %v", userID, err)
+		RespondWithError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
 
-	// Преобразуем NULL в пустую строку для FirstName
 	firstName := ""
 	if user.FirstName.Valid {
 		firstName = user.FirstName.String
 	}
 
-	// Логика определения должности
 	var position string
 	switch user.Role {
 	case "scout":
@@ -103,7 +102,6 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		position = "Стажер"
 	}
 
-	// Логика определения аватара
 	var finalAvatarURL interface{}
 	if user.AvatarURL.Valid && user.AvatarURL.String != "" {
 		finalAvatarURL = user.AvatarURL.String
@@ -111,7 +109,6 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		finalAvatarURL = nil
 	}
 
-	// Логика определения зоны
 	var finalZone interface{}
 	if user.Zone.Valid && user.Zone.String != "" {
 		finalZone = user.Zone.String
@@ -119,11 +116,10 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		finalZone = "Центр"
 	}
 
-	// Возвращаем полный профиль с статусом
 	RespondWithJSON(w, http.StatusOK, map[string]interface{}{
 		"id":         user.ID,
 		"username":   user.Username,
-		"firstName":  firstName,  // Используем преобразованное значение
+		"firstName":  firstName,
 		"telegramId": nullInt64ToInterface(user.TelegramID),
 		"role":       user.Role,
 		"avatarUrl":  finalAvatarURL,
@@ -134,17 +130,9 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Вспомогательные функции
 func nullInt64ToInterface(n sql.NullInt64) interface{} {
 	if n.Valid {
 		return n.Int64
-	}
-	return nil
-}
-
-func nullStringToInterface(s sql.NullString) interface{} {
-	if s.Valid {
-		return s.String
 	}
 	return nil
 }

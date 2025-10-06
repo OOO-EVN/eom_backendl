@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5" // ✅ Добавь этот импорт!
+	"github.com/go-chi/chi/v5"
 )
 
 type GenerateShiftsRequest struct {
@@ -59,6 +60,7 @@ func GenerateShiftsHandler(db *sql.DB) http.HandlerFunc {
 				break
 			}
 			if err := createSlot(tx, validScouts[i], date, slotTime); err != nil {
+				log.Printf("Failed to create morning shift: %v", err)
 				RespondWithError(w, http.StatusInternalServerError, "Failed to create morning shift")
 				return
 			}
@@ -70,12 +72,14 @@ func GenerateShiftsHandler(db *sql.DB) http.HandlerFunc {
 				break
 			}
 			if err := createSlot(tx, validScouts[i], date, slotTime); err != nil {
+				log.Printf("Failed to create evening shift: %v", err)
 				RespondWithError(w, http.StatusInternalServerError, "Failed to create evening shift")
 				return
 			}
 		}
 
 		if err := tx.Commit(); err != nil {
+			log.Printf("Shift generation commit error: %v", err)
 			RespondWithError(w, http.StatusInternalServerError, "Commit error")
 			return
 		}
@@ -93,19 +97,19 @@ func filterAvailableScouts(db *sql.DB, scoutIDs []int, date time.Time) ([]int, e
 	}
 
 	placeholders := make([]string, len(scoutIDs))
-	args := make([]interface{}, len(scoutIDs))
+	args := make([]interface{}, len(scoutIDs)+1)
 	for i, id := range scoutIDs {
-		placeholders[i] = "?"
+		placeholders[i] = "$" + strconv.Itoa(i+1)
 		args[i] = id
 	}
-	args = append(args, date.Format("2006-01-02"))
+	args[len(scoutIDs)] = date.Format("2006-01-02")
 
 	query := fmt.Sprintf(`
 		SELECT user_id FROM slots 
 		WHERE user_id IN (%s) 
-		AND DATE(start_time) = ?
+		AND DATE(start_time) = $%d
 		AND end_time IS NULL
-	`, strings.Join(placeholders, ","))
+	`, strings.Join(placeholders, ","), len(scoutIDs)+1)
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -116,7 +120,9 @@ func filterAvailableScouts(db *sql.DB, scoutIDs []int, date time.Time) ([]int, e
 	busy := make(map[int]bool)
 	for rows.Next() {
 		var id int
-		rows.Scan(&id)
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
 		busy[id] = true
 	}
 
@@ -132,21 +138,19 @@ func filterAvailableScouts(db *sql.DB, scoutIDs []int, date time.Time) ([]int, e
 func createSlot(tx *sql.Tx, userID int, date time.Time, slotTime string) error {
 	_, err := tx.Exec(`
 		INSERT INTO slots (user_id, start_time, slot_time_range, position, zone, selfie_path) 
-		VALUES (?, ?, ?, 'Скаут', 'Центр', '')
+		VALUES ($1, $2, $3, 'Скаут', 'Центр', '')
 	`, userID, date.Format("2006-01-02 07:00:00"), slotTime)
 	return err
 }
 
-// ✅ Обработчик: получить смены по дате
 func GetShiftsByDateHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		dateStr := chi.URLParam(r, "date") // ✅ Теперь chi доступен
+		dateStr := chi.URLParam(r, "date")
 		if dateStr == "" {
 			RespondWithError(w, http.StatusBadRequest, "Date is required")
 			return
 		}
 
-		// Проверка формата даты
 		_, err := time.Parse("2006-01-02", dateStr)
 		if err != nil {
 			RespondWithError(w, http.StatusBadRequest, "Invalid date format, expected YYYY-MM-DD")
@@ -167,7 +171,7 @@ func GetShiftsByDateHandler(db *sql.DB) http.HandlerFunc {
 				s.end_time
 			FROM slots s
 			JOIN users u ON s.user_id = u.id
-			WHERE DATE(s.start_time) = ?
+			WHERE DATE(s.start_time) = $1
 			ORDER BY s.start_time
 		`
 
@@ -207,7 +211,6 @@ func GetShiftsByDateHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// Вспомогательная функция: определяет тип смены по временному диапазону
 func getShiftTypeFromTimeRange(timeRange string) string {
 	if strings.Contains(timeRange, "07:00") {
 		return "morning"
