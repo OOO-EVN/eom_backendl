@@ -2,9 +2,12 @@
 package handlers
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"log"
 	"net/http"
@@ -12,9 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
-	"crypto/rand"
-	_ "image/jpeg"
-	_ "image/png"
+
 	"github.com/evn/eom_backendl/config"
 	"github.com/go-chi/chi/v5"
 )
@@ -65,11 +66,11 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		positionMap := map[string]string{
-			"superadmin":   "Суперадмин",
-			"admin":        "Администратор",
-			"coordinator":  "Координатор",
-			"scout":        "Скаут",
-			"user":         "Пользователь",
+			"superadmin":  "Суперадмин",
+			"admin":       "Администратор",
+			"coordinator": "Координатор",
+			"scout":       "Скаут",
+			"user":        "Пользователь",
 		}
 
 		if readablePosition, exists := positionMap[position]; exists {
@@ -196,14 +197,14 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		RespondWithJSON(w, http.StatusCreated, map[string]interface{}{
-			"message":           "Slot started successfully",
-			"selfie":            "/uploads/selfies/" + filename,
-			"id":                slotID,
-			"user_id":           userID,
-			"slot_time_range":   slotTimeRange,
-			"position":          position,
-			"zone":              zone,
-			"start_time":        time.Now().Format(time.RFC3339),
+			"message":         "Slot started successfully",
+			"selfie":          "/uploads/selfies/" + filename,
+			"id":              slotID,
+			"user_id":         userID,
+			"slot_time_range": slotTimeRange,
+			"position":        position,
+			"zone":            zone,
+			"start_time":      time.Now().Format(time.RFC3339),
 		})
 	}
 }
@@ -504,11 +505,11 @@ func GetAvailablePositionsHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		positionMap := map[string]string{
-			"superadmin":   "Суперадмин",
-			"admin":        "Администратор",
-			"coordinator":  "Координатор",
-			"scout":        "Скаут",
-			"user":         "Пользователь",
+			"superadmin":  "Суперадмин",
+			"admin":       "Администратор",
+			"coordinator": "Координатор",
+			"scout":       "Скаут",
+			"user":        "Пользователь",
 		}
 
 		position := "Сотрудник"
