@@ -61,9 +61,9 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = h.db.QueryRow(`
-		SELECT id, username, first_name, telegram_id, role, avatar_url, zone, status, is_active
-		FROM users
-		WHERE id = $1`, userID).Scan(
+	SELECT id, username, first_name, telegram_id, role, avatar_url, zone, status, is_active
+	FROM users
+	WHERE id = $1`, userID).Scan(
 		&user.ID,
 		&user.Username,
 		&user.FirstName,
@@ -76,6 +76,13 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
+		if err == sql.ErrNoRows {
+			// Пользователь не найден — это не ошибка сервера
+			log.Printf("User not found (ID: %d)", userID)
+			RespondWithError(w, http.StatusNotFound, "User not found")
+			return
+		}
+		// Настоящая ошибка базы данных (например, подключение, синтаксис и т.д.)
 		log.Printf("Database error in GetProfile (user %d): %v", userID, err)
 		RespondWithError(w, http.StatusInternalServerError, "Database error")
 		return

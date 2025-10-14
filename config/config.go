@@ -3,8 +3,9 @@ package config
 
 import (
 	"os"
-	"strconv" 
+	"strconv"
 
+	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -15,20 +16,23 @@ const (
 )
 
 type Config struct {
-	DatabaseDSN        string
-	JwtSecret          string
-	ServerPort         string
-	TelegramBotToken   string
-	RedisAddr          string
-	RedisPassword      string
-	RedisDB            int
+	DatabaseDSN      string
+	JwtSecret        string
+	ServerPort       string
+	TelegramBotToken string
+	RedisAddr        string
+	RedisPassword    string
+	RedisDB          int
 }
 
 func NewConfig() *Config {
+	// ✅ Загружаем .env перед всем остальным
+	_ = godotenv.Load(".env")
+
 	dsn := getEnv("DATABASE_DSN", "./data.db")
 	jwtSecret := getEnv("JWT_SECRET", "0hn/a5hwoWLn4nrmogQo+zDCM7h9203J4Iwhkp7b2ns=")
 	port := getEnv("SERVER_PORT", "6066")
-	telegramBotToken := getEnv("TELEGRAM_BOT_TOKEN", "8213575254:AAEhzM_f_LJ-RRdaME2YAiA7tqtzWjaS-Wk")
+	telegramBotToken := getEnv("TELEGRAM_BOT_TOKEN", "")
 	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
 	redisPassword := getEnv("REDIS_PASSWORD", "")
 	redisDB := parseInt(getEnv("REDIS_DB", "0"))
@@ -65,3 +69,4 @@ func NewRedisClient() *redis.Client {
 		DB:       cfg.RedisDB,
 	})
 }
+

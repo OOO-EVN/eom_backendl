@@ -99,7 +99,7 @@ func AutoEndShiftsHandler(db *sql.DB) http.HandlerFunc {
 // endSlot — закрывает одну смену
 func endSlot(db *sql.DB, slotID, userID int) error {
 	var startTime time.Time
-	err := db.QueryRow("SELECT start_time FROM slots WHERE id = ? AND end_time IS NULL", slotID).Scan(&startTime)
+	err := db.QueryRow("SELECT start_time FROM slots WHERE id = $1 AND end_time IS NULL", slotID).Scan(&startTime)
 	if err == sql.ErrNoRows {
 		return nil // смена уже завершена
 	} else if err != nil {
@@ -109,7 +109,7 @@ func endSlot(db *sql.DB, slotID, userID int) error {
 	endTime := time.Now()
 	duration := int(endTime.Sub(startTime).Seconds())
 
-	_, err = db.Exec("UPDATE slots SET end_time = ?, worked_duration = ? WHERE id = ?", endTime, duration, slotID)
+	_, err = db.Exec("UPDATE slots SET end_time = $1, worked_duration = $2 WHERE id = $3", endTime, duration, slotID)
 	return err
 }
 

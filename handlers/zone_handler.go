@@ -51,37 +51,60 @@ func CreateZoneHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		result, err := db.Exec("INSERT OR IGNORE INTO zones (name) VALUES (?)", zone.Name)
+		var newID int
+		err := db.QueryRow(`
+			INSERT INTO zones (name) 
+			VALUES ($1) 
+			ON CONFLICT (name) DO NOTHING 
+			RETURNING id
+		`, zone.Name).Scan(&newID)
+
 		if err != nil {
-			RespondWithError(w, http.StatusInternalServerError, "Failed to create zone")
-			return
+			if err == sql.ErrNoRows {
+				// Запись уже существует — получаем её ID
+				err = db.QueryRow("SELECT id FROM zones WHERE name = $1", zone.Name).Scan(&newID)
+				if err != nil {
+					log.Printf("Failed to fetch existing zone ID: %v", err)
+					RespondWithError(w, http.StatusInternalServerError, "Failed to retrieve zone")
+					return
+				}
+			} else {
+				log.Printf("Database insert error: %v", err)
+				RespondWithError(w, http.StatusInternalServerError, "Failed to create zone")
+				return
+			}
 		}
 
-		id, _ := result.LastInsertId()
-		if id == 0 {
-			var existingID int
-			db.QueryRow("SELECT id FROM zones WHERE name = ?", zone.Name).Scan(&existingID)
-			zone.ID = existingID
-		} else {
-			zone.ID = int(id)
-		}
-
+		zone.ID = newID
 		RespondWithJSON(w, http.StatusCreated, zone)
 	}
 }
 
 func UpdateZoneHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+		idStr := chi.URLParam(r, "id")
+		id, err := strconv.Atoi(idStr)
+		if err != nil {
+			RespondWithError(w, http.StatusBadRequest, "Invalid zone ID")
+			return
+		}
+
 		var zone Zone
 		if err := json.NewDecoder(r.Body).Decode(&zone); err != nil {
 			RespondWithError(w, http.StatusBadRequest, "Invalid JSON")
 			return
 		}
 
-		_, err := db.Exec("UPDATE zones SET name = ? WHERE id = ?", zone.Name, id)
+		result, err := db.Exec("UPDATE zones SET name = $1 WHERE id = $2", zone.Name, id)
 		if err != nil {
+			log.Printf("Database update error: %v", err)
 			RespondWithError(w, http.StatusInternalServerError, "Failed to update zone")
+			return
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			RespondWithError(w, http.StatusNotFound, "Zone not found")
 			return
 		}
 
@@ -92,14 +115,16 @@ func UpdateZoneHandler(db *sql.DB) http.HandlerFunc {
 
 func DeleteZoneHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := strconv.Atoi(chi.URLParam(r, "id"))
+		idStr := chi.URLParam(r, "id")
+		id, err := strconv.Atoi(idStr)
 		if err != nil {
 			RespondWithError(w, http.StatusBadRequest, "Invalid zone ID")
 			return
 		}
 
-		result, err := db.Exec("DELETE FROM zones WHERE id = ?", id)
+		result, err := db.Exec("DELETE FROM zones WHERE id = $1", id)
 		if err != nil {
+			log.Printf("Database delete error: %v", err)
 			RespondWithError(w, http.StatusInternalServerError, "Failed to delete zone")
 			return
 		}

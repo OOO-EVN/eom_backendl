@@ -66,7 +66,7 @@ func (h *ScooterStatsHandler) GetShiftStatsHandler(w http.ResponseWriter, r *htt
 			accepted_by_username, 
 			accepted_by_fullname 
 		FROM accepted_scooters 
-		WHERE timestamp BETWEEN ? AND ?
+		WHERE timestamp BETWEEN $1 AND $2
 	`
 	rows, err := botDB.Query(query, startTime.Format("2006-01-02 15:04:05"), endTime.Format("2006-01-02 15:04:05"))
 	if err != nil {

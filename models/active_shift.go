@@ -10,5 +10,4 @@ type ActiveShift struct {
 	Position      string `json:"position"`
 	Zone          string `json:"zone"`
 	SelfiePath    string `json:"selfie_path"`
-	LastLocation  *Location `json:"last_location,omitempty"`
 }

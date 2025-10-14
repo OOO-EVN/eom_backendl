@@ -13,6 +13,7 @@ import (
 	"github.com/evn/eom_backendl/config"
 	"github.com/evn/eom_backendl/db"
 	"github.com/evn/eom_backendl/handlers"
+	"github.com/evn/eom_backendl/repositories"
 	"github.com/evn/eom_backendl/services"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -24,17 +25,16 @@ func main() {
 	database := db.InitDB(cfg.DatabaseDSN)
 	defer database.Close()
 
-
-
 	redisClient := config.NewRedisClient()
 	defer redisClient.Close()
 
 	jwtAuth := jwtauth.New("HS256", []byte(cfg.JwtSecret), nil)
 	jwtService := services.NewJWTService(cfg.JwtSecret, redisClient)
 	telegramAuthService := services.NewTelegramAuthService(cfg.TelegramBotToken)
-	redisStore := services.NewRedisStore(redisClient)
-	wsManager := services.NewWebSocketManager(redisStore, database)
-	go wsManager.Run()
+
+	posRepo := repositories.NewPositionRepository(database)
+	geoService := services.NewGeoTrackService(posRepo, redisClient)
+	geoHandler := handlers.NewGeoTrackHandler(geoService)
 
 	authHandler := handlers.NewAuthHandler(database, jwtService, telegramAuthService)
 	profileHandler := handlers.NewProfileHandler(database)
@@ -75,6 +75,8 @@ func main() {
 		})
 	})
 
+	router.Post("/api/geo", geoHandler.PostGeo)
+
 	router.Post("/api/auth/register", authHandler.RegisterHandler)
 	router.Post("/api/auth/login", authHandler.LoginHandler)
 	router.Post("/api/auth/telegram", authHandler.TelegramAuthHandler)
@@ -84,7 +86,6 @@ func main() {
 	router.Handle("/uploads/*", http.StripPrefix("/uploads", http.FileServer(http.Dir("./uploads"))))
 	router.Get("/api/active-slots", handlers.GetActiveShiftsHandler(database))
 	router.Post("/api/auth/refresh", authHandler.RefreshTokenHandler)
-	router.Get("/ws", handlers.WebSocketHandler(wsManager, database, jwtService))
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		handlers.RespondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -95,14 +96,13 @@ func main() {
 		r.Get("/api/profile", profileHandler.GetProfile)
 		r.Post("/api/logout", authHandler.LogoutHandler)
 		r.Post("/api/auth/complete-registration", authHandler.CompleteRegistrationHandler)
-		r.Get("/api/online-users", handlers.GetOnlineUsersHandler(redisStore))
 		r.Get("/api/admin/active-shifts", GetActiveShiftsForAll(database))
 		r.Get("/api/admin/ended-shifts", handlers.GetEndedShiftsHandler(database))
 		r.Post("/api/slot/start", handlers.StartSlotHandler(database))
 		r.Post("/api/slot/end", handlers.EndSlotHandler(database))
 		r.Get("/api/shifts/active", handlers.GetUserActiveShiftHandler(database))
 		r.Get("/api/shifts", handlers.GetShiftsHandler(database))
-r.Get("/api/shifts/date/{date}", handlers.GetShiftsByDateHandler(database))
+		r.Get("/api/shifts/date/{date}", handlers.GetShiftsByDateHandler(database))
 		r.Get("/api/users/{userID}/shifts", handlers.GetUserShiftsByIDHandler(database))
 
 		r.Get("/api/slots/positions", handlers.GetAvailablePositionsHandler(database))
@@ -145,6 +145,8 @@ r.Get("/api/shifts/date/{date}", handlers.GetShiftsByDateHandler(database))
 			r.Delete("/api/admin/app/versions/{id}", appVersionHandler.DeleteVersionHandler)
 
 			r.Get("/api/admin/auto-end-shifts", handlers.AutoEndShiftsHandler(database))
+
+			r.Get("/last", geoHandler.GetLast)
 		})
 	})
 
@@ -203,7 +205,6 @@ func ensureUploadDirs() error {
 	dirs := []string{
 		"./uploads/selfies",
 		"./uploads/maps",
-		// "./uploads/tasks",
 		"./uploads/app",
 	}
 	for _, dir := range dirs {
@@ -250,4 +251,3 @@ func GetActiveShiftsForAll(db *sql.DB) http.HandlerFunc {
 		handlers.RespondWithJSON(w, http.StatusOK, shifts)
 	}
 }
-

@@ -3,7 +3,6 @@ package handlers
 
 import (
 	"database/sql"
-//	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -34,26 +33,27 @@ type Map struct {
 
 // UploadMapHandler загружает новую карту
 func (h *MapHandler) UploadMapHandler(w http.ResponseWriter, r *http.Request) {
-	// Проверяем, что это multipart/form-data запрос
 	if r.Method != http.MethodPost {
 		RespondWithError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	// Ограничиваем размер загружаемого файла до 40 МБ
-	r.ParseMultipartForm(40 << 20)
+	err := r.ParseMultipartForm(40 << 20)
+	if err != nil {
+		log.Printf("Error parsing multipart form: %v", err)
+		RespondWithError(w, http.StatusBadRequest, "Request too large or invalid")
+		return
+	}
 
-	// Получаем город
 	city := r.FormValue("city")
 	if city == "" {
 		RespondWithError(w, http.StatusBadRequest, "City is required")
 		return
 	}
 
-	// Получаем описание (опционально)
 	description := r.FormValue("description")
 
-	// Получаем файл
 	file, handler, err := r.FormFile("geojson_file")
 	if err != nil {
 		log.Printf("Error retrieving file: %v", err)
@@ -62,14 +62,12 @@ func (h *MapHandler) UploadMapHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Проверяем расширение файла
 	ext := filepath.Ext(handler.Filename)
 	if ext != ".geojson" && ext != ".json" {
 		RespondWithError(w, http.StatusBadRequest, "Only .geojson and .json files are allowed")
 		return
 	}
 
-	// Создаем директорию для загрузки карт, если её нет
 	mapDir := "./uploads/maps"
 	if err := os.MkdirAll(mapDir, 0755); err != nil {
 		log.Printf("Error creating map directory: %v", err)
@@ -77,58 +75,70 @@ func (h *MapHandler) UploadMapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Генерируем уникальное имя файла
-	filename := fmt.Sprintf("%d_%s", getNextID(h.db), handler.Filename)
+	// Сначала создаём запись в БД, чтобы получить уникальный ID
+	var mapID int
+	err = h.db.QueryRow(`
+		INSERT INTO maps (city, description, file_name, file_size)
+		VALUES ($1, $2, '', 0)
+		RETURNING id
+	`, city, description).Scan(&mapID)
+	if err != nil {
+		log.Printf("Error inserting map into database: %v", err)
+		RespondWithError(w, http.StatusInternalServerError, "Error saving map to database")
+		return
+	}
+
+	// Генерируем имя файла с использованием реального ID
+	filename := fmt.Sprintf("map_%d%s", mapID, ext)
 	filePath := filepath.Join(mapDir, filename)
 
-	// Создаем файл на сервере
+	// Создаём файл на диске
 	dst, err := os.Create(filePath)
 	if err != nil {
 		log.Printf("Error creating file: %v", err)
+		// Откат: удаляем запись из БД
+		h.db.Exec("DELETE FROM maps WHERE id = $1", mapID)
 		RespondWithError(w, http.StatusInternalServerError, "Error creating file")
 		return
 	}
 	defer dst.Close()
 
-	// Копируем содержимое загруженного файла в созданный файл
+	// Копируем содержимое
 	if _, err := io.Copy(dst, file); err != nil {
 		log.Printf("Error copying file: %v", err)
-		RespondWithError(w, http.StatusInternalServerError, "Error copying file")
+		dst.Close()
+		os.Remove(filePath)
+		h.db.Exec("DELETE FROM maps WHERE id = $1", mapID)
+		RespondWithError(w, http.StatusInternalServerError, "Error saving file")
 		return
 	}
 
-	// Получаем информацию о файле
+	// Получаем размер файла
 	fileInfo, err := dst.Stat()
 	if err != nil {
 		log.Printf("Error getting file info: %v", err)
-		RespondWithError(w, http.StatusInternalServerError, "Error getting file info")
-		return
-	}
-
-	// Сохраняем информацию о карте в базу данных
-	query := `
-		INSERT INTO maps (city, description, file_name, file_size, upload_date)
-		VALUES (?, ?, ?, ?, datetime('now'))
-	`
-	result, err := h.db.Exec(query, city, description, filename, fileInfo.Size())
-	if err != nil {
-		log.Printf("Error saving map to database: %v", err)
-		// Удаляем файл в случае ошибки
+		dst.Close()
 		os.Remove(filePath)
-		RespondWithError(w, http.StatusInternalServerError, "Error saving map to database")
+		h.db.Exec("DELETE FROM maps WHERE id = $1", mapID)
+		RespondWithError(w, http.StatusInternalServerError, "Error reading file")
 		return
 	}
 
-	mapID, err := result.LastInsertId()
+	// Обновляем запись в БД с реальными данными файла
+	_, err = h.db.Exec(`
+		UPDATE maps
+		SET file_name = $1, file_size = $2
+		WHERE id = $3
+	`, filename, fileInfo.Size(), mapID)
 	if err != nil {
-		log.Printf("Error getting last insert ID: %v", err)
-		// Удаляем файл в случае ошибки
+		log.Printf("Error updating map record: %v", err)
+		dst.Close()
 		os.Remove(filePath)
-		RespondWithError(w, http.StatusInternalServerError, "Error getting map ID")
+		h.db.Exec("DELETE FROM maps WHERE id = $1", mapID)
+		RespondWithError(w, http.StatusInternalServerError, "Error finalizing map upload")
 		return
 	}
 
-	// Возвращаем успешный ответ
 	response := map[string]interface{}{
 		"id":          mapID,
 		"city":        city,
@@ -171,8 +181,8 @@ func (h *MapHandler) GetMapsHandler(w http.ResponseWriter, r *http.Request) {
 
 // GetMapByIDHandler возвращает информацию о конкретной карте
 func (h *MapHandler) GetMapByIDHandler(w http.ResponseWriter, r *http.Request) {
-	mapID := chi.URLParam(r, "mapID")
-	id, err := strconv.Atoi(mapID)
+	mapIDStr := chi.URLParam(r, "mapID")
+	id, err := strconv.Atoi(mapIDStr)
 	if err != nil {
 		RespondWithError(w, http.StatusBadRequest, "Invalid map ID")
 		return
@@ -182,7 +192,7 @@ func (h *MapHandler) GetMapByIDHandler(w http.ResponseWriter, r *http.Request) {
 	query := `
 		SELECT id, city, description, file_name, file_size, upload_date
 		FROM maps
-		WHERE id = ?
+		WHERE id = $1
 	`
 	err = h.db.QueryRow(query, id).Scan(&m.ID, &m.City, &m.Description, &m.FileName, &m.FileSize, &m.UploadDate)
 	if err != nil {
@@ -200,17 +210,15 @@ func (h *MapHandler) GetMapByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 // DeleteMapHandler удаляет карту
 func (h *MapHandler) DeleteMapHandler(w http.ResponseWriter, r *http.Request) {
-	mapID := chi.URLParam(r, "mapID")
-	id, err := strconv.Atoi(mapID)
+	mapIDStr := chi.URLParam(r, "mapID")
+	id, err := strconv.Atoi(mapIDStr)
 	if err != nil {
 		RespondWithError(w, http.StatusBadRequest, "Invalid map ID")
 		return
 	}
 
-	// Получаем информацию о файле перед удалением
 	var fileName string
-	query := `SELECT file_name FROM maps WHERE id = ?`
-	err = h.db.QueryRow(query, id).Scan(&fileName)
+	err = h.db.QueryRow("SELECT file_name FROM maps WHERE id = $1", id).Scan(&fileName)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			RespondWithError(w, http.StatusNotFound, "Map not found")
@@ -221,32 +229,18 @@ func (h *MapHandler) DeleteMapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Удаляем запись из базы данных
-	query = `DELETE FROM maps WHERE id = ?`
-	result, err := h.db.Exec(query, id)
+	_, err = h.db.Exec("DELETE FROM maps WHERE id = $1", id)
 	if err != nil {
 		log.Printf("Database delete error: %v", err)
 		RespondWithError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		log.Printf("Error getting rows affected: %v", err)
-		RespondWithError(w, http.StatusInternalServerError, "Database error")
-		return
-	}
-
-	if rowsAffected == 0 {
-		RespondWithError(w, http.StatusNotFound, "Map not found")
-		return
-	}
-
-	// Удаляем файл с сервера
 	filePath := filepath.Join("./uploads/maps", fileName)
 	if err := os.Remove(filePath); err != nil {
-		log.Printf("Error deleting file: %v", err)
-		// Не возвращаем ошибку, так как запись в БД уже удалена
+		if !os.IsNotExist(err) {
+			log.Printf("Warning: failed to delete map file %s: %v", filePath, err)
+		}
 	}
 
 	RespondWithJSON(w, http.StatusOK, map[string]string{"message": "Map deleted successfully"})
@@ -257,42 +251,28 @@ func (h *MapHandler) ServeMapFileHandler(w http.ResponseWriter, r *http.Request)
 	filename := chi.URLParam(r, "filename")
 	filePath := filepath.Join("./uploads/maps", filename)
 
-	// Проверяем, существует ли файл
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		RespondWithError(w, http.StatusNotFound, "File not found")
 		return
 	}
 
-	// Устанавливаем заголовки для GeoJSON
 	w.Header().Set("Content-Type", "application/geo+json")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filename))
-
-	// Отправляем файл
 	http.ServeFile(w, r, filePath)
-}
-
-// Вспомогательная функция для генерации уникального ID
-func getNextID(db *sql.DB) int {
-	var maxID int
-	err := db.QueryRow("SELECT COALESCE(MAX(id), 0) + 1 FROM maps").Scan(&maxID)
-	if err != nil {
-		return 1
-	}
-	return maxID
 }
 
 // CreateMapsTable создает таблицу для хранения информации о картах
 func CreateMapsTable(db *sql.DB) error {
-    query := `
+	query := `
     CREATE TABLE IF NOT EXISTS maps (
         id SERIAL PRIMARY KEY,
         city TEXT NOT NULL,
         description TEXT,
         file_name TEXT NOT NULL,
         file_size BIGINT NOT NULL,
-        upload_date TIMESTAMP WITH TIME ZONE DEFAULT NOW()  
+        upload_date TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
     `
-    _, err := db.Exec(query)
-    return err
+	_, err := db.Exec(query)
+	return err
 }

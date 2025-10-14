@@ -31,7 +31,7 @@ func CreateUserHandler(db *sql.DB) http.HandlerFunc {
 
 		// Проверяем, существует ли пользователь с таким именем
 		var count int
-		err := db.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", input.Username).Scan(&count)
+		err := db.QueryRow("SELECT COUNT(*) FROM users WHERE username = $1", input.Username).Scan(&count)
 		if err != nil {
 			log.Printf("DB error checking for existing user: %v", err)
 			RespondWithError(w, http.StatusInternalServerError, "DB error")
@@ -43,7 +43,7 @@ func CreateUserHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		_, err = db.Exec(
-			"INSERT INTO users (username, first_name, role) VALUES (?, ?, ?)",
+			"INSERT INTO users (username, first_name, role) VALUES ($1, $2, $3)",
 			input.Username,
 			input.FirstName,
 			"scout",
@@ -75,13 +75,13 @@ func UpdateUserRoleHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var roleExists int
-		err = db.QueryRow("SELECT COUNT(*) FROM roles WHERE name = ?", update.Role).Scan(&roleExists)
+		err = db.QueryRow("SELECT COUNT(*) FROM roles WHERE name = $1", update.Role).Scan(&roleExists)
 		if err != nil || roleExists == 0 {
 			RespondWithError(w, http.StatusBadRequest, "Role does not exist")
 			return
 		}
 
-		_, err = db.Exec("UPDATE users SET role = ? WHERE id = ?", update.Role, userID)
+		_, err = db.Exec("UPDATE users SET role = $1 WHERE id = $2", update.Role, userID)
 		if err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "Failed to update user role: "+err.Error())
 			return
@@ -123,7 +123,7 @@ func UpdateUserStatusHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Обновляем запись в БД
-		_, err = db.Exec("UPDATE users SET status = ?, is_active = ? WHERE id = ?", req.Status, isActive, userID)
+		_, err = db.Exec("UPDATE users SET status = $1, is_active = $2 WHERE id = $3", req.Status, isActive, userID)
 		if err != nil {
 			log.Printf("Failed to update user %d status: %v", userID, err)
 			RespondWithError(w, http.StatusInternalServerError, "Failed to update user status")
@@ -143,7 +143,7 @@ func DeleteUserHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		result, err := db.Exec("DELETE FROM users WHERE id = ?", userID)
+		result, err := db.Exec("DELETE FROM users WHERE id = $1", userID)
 		if err != nil {
 			log.Printf("Failed to delete user: %v", err)
 			RespondWithError(w, http.StatusInternalServerError, "Failed to delete user")
@@ -176,7 +176,7 @@ func CreateRoleHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err := db.Exec("INSERT INTO roles (name) VALUES (?)", newRole.Name)
+		_, err := db.Exec("INSERT INTO roles (name) VALUES ($1)", newRole.Name)
 		if err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "Failed to create new role: "+err.Error())
 			return
@@ -201,7 +201,7 @@ func DeleteRoleHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err := db.Exec("DELETE FROM roles WHERE name = ?", roleToDelete.Name)
+		_, err := db.Exec("DELETE FROM roles WHERE name = $1", roleToDelete.Name)
 		if err != nil {
 			RespondWithError(w, http.StatusInternalServerError, "Failed to delete role: "+err.Error())
 			return

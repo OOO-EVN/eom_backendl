@@ -91,3 +91,17 @@ INSERT OR IGNORE INTO users
 (username, password_hash, first_name, last_name, role, is_active) 
 VALUES 
 ('evn', '$2a$10$8K1p/a0dURXAm7QiTRqNa.E3YPWsQjW/GowrgA094kL4FxH.lBs8O', 'Evn', 'Root', 'superadmin', TRUE);
+CREATE TABLE IF NOT EXISTS positions (
+  id BIGSERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  lat DOUBLE PRECISION NOT NULL,
+  lon DOUBLE PRECISION NOT NULL,
+  speed DOUBLE PRECISION,
+  accuracy DOUBLE PRECISION,
+  battery INT CHECK (battery BETWEEN 0 AND 100),
+  event TEXT DEFAULT 'heartbeat',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_positions_user_id ON positions(user_id);
+CREATE INDEX IF NOT EXISTS idx_positions_created_at ON positions(created_at);
