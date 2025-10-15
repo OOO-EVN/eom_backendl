@@ -541,3 +541,32 @@ func GetAvailableTimeSlotsHandler(db *sql.DB) http.HandlerFunc {
 		RespondWithJSON(w, http.StatusOK, timeSlots)
 	}
 }
+func GetAvailableTimeSlotsForStartHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rows, err := db.Query("SELECT slot_time_range FROM available_time_slots")
+		if err != nil {
+			log.Printf("DB error: %v", err)
+			RespondWithError(w, http.StatusInternalServerError, "Failed to load time slots")
+			return
+		}
+		defer rows.Close()
+
+		var allSlots []string
+		for rows.Next() {
+			var slot string
+			if err := rows.Scan(&slot); err != nil {
+				continue
+			}
+			allSlots = append(allSlots, NormalizeSlot(slot))
+		}
+
+		var availableNow []string
+		for _, slot := range allSlots {
+			if canStartShift(slot) {
+				availableNow = append(availableNow, slot)
+			}
+		}
+
+		RespondWithJSON(w, http.StatusOK, availableNow)
+	}
+}
