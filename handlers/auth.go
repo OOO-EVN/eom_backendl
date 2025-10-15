@@ -269,6 +269,7 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 			if firstName == "" {
 				firstName = tgUsername
 			}
+			photoURL := validatedData["photo_url"] // ← добавлено
 
 			err = h.db.QueryRow(`
 				INSERT INTO users (telegram_id, username, first_name, role, status, is_active)
@@ -277,6 +278,8 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 				tgID,
 				tgUsername,
 				firstName,
+				photoURL, // ← добавлено
+
 			).Scan(&user.ID, &user.Username, &user.FirstName)
 
 			if err != nil {
@@ -290,7 +293,12 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 			user.Status = "pending"
 		} else {
 			// Найден по username, но без telegram_id — обновляем
-			_, err = h.db.Exec(`UPDATE users SET telegram_id = $1 WHERE id = $2`, tgID, user.ID)
+			photoURL := validatedData["photo_url"]
+			_, err = h.db.Exec(`
+    UPDATE users 
+    SET telegram_id = $1, avatar_url = $2 
+    WHERE id = $3`,
+				tgID, photoURL, user.ID)
 			if err != nil {
 				log.Printf("Failed to update user %d with telegram_id %d: %v", user.ID, tgID, err)
 				// Не критично — продолжаем
@@ -300,8 +308,11 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 	} else {
 		// Найден по telegram_id — обновляем first_name на всякий случай
 		_, err = h.db.Exec(`
-			UPDATE users SET first_name = $1 WHERE id = $2`,
+    UPDATE users 
+    SET first_name = $1, avatar_url = $2 
+    WHERE id = $3`,
 			validatedData["first_name"],
+			validatedData["photo_url"], // ← добавлено
 			user.ID,
 		)
 		if err != nil {

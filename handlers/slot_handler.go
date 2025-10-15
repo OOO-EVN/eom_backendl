@@ -92,9 +92,6 @@ func StartSlotHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Нормализуем временной слот
-		slotTimeRange = NormalizeSlot(slotTimeRange)
-
 		if !canStartShift(slotTimeRange) {
 			RespondWithError(w, http.StatusBadRequest, "Смену можно начать только за 20 минут до её начала или в течение смены")
 			return
@@ -536,11 +533,12 @@ func GetAvailableTimeSlotsHandler(db *sql.DB) http.HandlerFunc {
 				log.Printf("Error scanning time slot: %v", err)
 				continue
 			}
-			timeSlots = append(timeSlots, NormalizeSlot(timeSlot))
+			timeSlots = append(timeSlots, (timeSlot))
 		}
 		RespondWithJSON(w, http.StatusOK, timeSlots)
 	}
 }
+
 func GetAvailableTimeSlotsForStartHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rows, err := db.Query("SELECT slot_time_range FROM available_time_slots")
@@ -557,7 +555,7 @@ func GetAvailableTimeSlotsForStartHandler(db *sql.DB) http.HandlerFunc {
 			if err := rows.Scan(&slot); err != nil {
 				continue
 			}
-			allSlots = append(allSlots, NormalizeSlot(slot))
+			allSlots = append(allSlots, slot)
 		}
 
 		var availableNow []string
@@ -567,6 +565,7 @@ func GetAvailableTimeSlotsForStartHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
+		// Правильный вызов — в том же пакете
 		RespondWithJSON(w, http.StatusOK, availableNow)
 	}
 }

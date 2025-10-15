@@ -81,7 +81,7 @@ func main() {
 	router.Post("/api/auth/login", authHandler.LoginHandler)
 	router.Post("/api/auth/telegram", authHandler.TelegramAuthHandler)
 	router.Get("/auth_callback", authHandler.TelegramAuthCallbackHandler)
-
+	router.Get("/api/time-slots/available-for-start", handlers.GetAvailableTimeSlotsForStartHandler(database))
 	router.Get("/api/users", handlers.ListUsersHandler(database))
 	router.Handle("/uploads/*", http.StripPrefix("/uploads", http.FileServer(http.Dir("./uploads"))))
 	router.Get("/api/active-slots", handlers.GetActiveShiftsHandler(database))
@@ -104,7 +104,8 @@ func main() {
 		r.Get("/api/shifts", handlers.GetShiftsHandler(database))
 		r.Get("/api/shifts/date/{date}", handlers.GetShiftsByDateHandler(database))
 		r.Get("/api/users/{userID}/shifts", handlers.GetUserShiftsByIDHandler(database))
-		r.Get("/api/time-slots/available-for-start", handlers.GetAvailableTimeSlotsForStartHandler(database))
+		//r.Get("/api/time-slots/available-for-start", handlers.GetAvailableTimeSlotsForStartHandler(database))
+
 		r.Get("/api/slots/positions", handlers.GetAvailablePositionsHandler(database))
 		r.Get("/api/slots/times", handlers.GetAvailableTimeSlotsHandler(database))
 		r.Get("/api/slots/zones", handlers.GetAvailableZonesHandler(database))
