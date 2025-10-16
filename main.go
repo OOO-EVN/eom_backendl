@@ -105,6 +105,7 @@ func main() {
 		r.Get("/api/shifts/date/{date}", handlers.GetShiftsByDateHandler(database))
 		r.Get("/api/users/{userID}/shifts", handlers.GetUserShiftsByIDHandler(database))
 		//r.Get("/api/time-slots/available-for-start", handlers.GetAvailableTimeSlotsForStartHandler(database))
+		r.Get("/api/last", geoHandler.GetLast) // ← доступен любому авторизованному
 
 		r.Get("/api/slots/positions", handlers.GetAvailablePositionsHandler(database))
 		r.Get("/api/slots/times", handlers.GetAvailableTimeSlotsHandler(database))
@@ -147,7 +148,7 @@ func main() {
 
 			r.Get("/api/admin/auto-end-shifts", handlers.AutoEndShiftsHandler(database))
 
-			r.Get("/last", geoHandler.GetLast)
+			// r.Get("/last", geoHandler.GetLast)
 		})
 	})
 

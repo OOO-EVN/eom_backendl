@@ -228,7 +228,6 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		Status     string
 	}
 
-	// Сначала ищем по telegram_id
 	err = h.db.QueryRow(`
 		SELECT id, username, first_name, telegram_id, role, status
 		FROM users
@@ -242,86 +241,55 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Если не найден по telegram_id — пробуем найти или создать
 	if errors.Is(err, sql.ErrNoRows) {
 		tgUsername := validatedData["username"]
 		if tgUsername == "" {
 			tgUsername = "tg_user_" + tgIDStr
 		}
 
-		// Пытаемся найти по username
-		err = h.db.QueryRow(`
-			SELECT id, username, first_name, telegram_id, role, status
-			FROM users
-			WHERE LOWER(username) = LOWER($1)`,
-			tgUsername,
-		).Scan(&user.ID, &user.Username, &user.FirstName, &user.TelegramID, &user.Role, &user.Status)
+		firstName := validatedData["first_name"]
+		if firstName == "" {
+			firstName = tgUsername
+		}
 
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			log.Printf("Database error finding user by username %s: %v", tgUsername, err)
-			RespondWithError(w, http.StatusInternalServerError, "Database error")
+		photoURL := validatedData["photo_url"]
+		phone := validatedData["phone"]
+
+		err = h.db.QueryRow(`
+			INSERT INTO users (telegram_id, username, first_name, avatar_url, phone, role, status, is_active)
+			VALUES ($1, $2, $3, $4, $5, 'user', 'pending', TRUE)
+			RETURNING id, username, first_name`,
+			tgID,
+			tgUsername,
+			firstName,
+			photoURL,
+			phone,
+		).Scan(&user.ID, &user.Username, &user.FirstName)
+
+		if err != nil {
+			log.Printf("Failed to create new user for telegram_id %d: %v", tgID, err)
+			RespondWithError(w, http.StatusInternalServerError, "Failed to create user")
 			return
 		}
 
-		if errors.Is(err, sql.ErrNoRows) {
-			// Создаём нового пользователя
-			firstName := validatedData["first_name"]
-			if firstName == "" {
-				firstName = tgUsername
-			}
-			photoURL := validatedData["photo_url"] // ← добавлено
-
-			err = h.db.QueryRow(`
-				INSERT INTO users (telegram_id, username, first_name, role, status, is_active)
-				VALUES ($1, $2, $3, 'user', 'pending', TRUE)
-				RETURNING id, username, first_name`,
-				tgID,
-				tgUsername,
-				firstName,
-				photoURL, // ← добавлено
-
-			).Scan(&user.ID, &user.Username, &user.FirstName)
-
-			if err != nil {
-				log.Printf("Failed to create new user for telegram_id %d: %v", tgID, err)
-				RespondWithError(w, http.StatusInternalServerError, "Failed to create user")
-				return
-			}
-
-			user.TelegramID = sql.NullInt64{Int64: int64(tgID), Valid: true}
-			user.Role = "user"
-			user.Status = "pending"
-		} else {
-			// Найден по username, но без telegram_id — обновляем
-			photoURL := validatedData["photo_url"]
-			_, err = h.db.Exec(`
-    UPDATE users 
-    SET telegram_id = $1, avatar_url = $2 
-    WHERE id = $3`,
-				tgID, photoURL, user.ID)
-			if err != nil {
-				log.Printf("Failed to update user %d with telegram_id %d: %v", user.ID, tgID, err)
-				// Не критично — продолжаем
-			}
-			user.TelegramID = sql.NullInt64{Int64: int64(tgID), Valid: true}
-		}
+		user.TelegramID = sql.NullInt64{Int64: int64(tgID), Valid: true}
+		user.Role = "user"
+		user.Status = "pending"
 	} else {
-		// Найден по telegram_id — обновляем first_name на всякий случай
 		_, err = h.db.Exec(`
-    UPDATE users 
-    SET first_name = $1, avatar_url = $2 
-    WHERE id = $3`,
+			UPDATE users 
+			SET first_name = $1, avatar_url = $2, phone = $3 
+			WHERE id = $4`,
 			validatedData["first_name"],
-			validatedData["photo_url"], // ← добавлено
+			validatedData["photo_url"],
+			validatedData["phone"],
 			user.ID,
 		)
 		if err != nil {
-			log.Printf("Failed to update first_name for user %d: %v", user.ID, err)
-			// Не критично
+			log.Printf("Failed to update profile for user %d: %v", user.ID, err)
 		}
 	}
 
-	// Проверка статуса
 	if user.Status == "pending" && user.Role != "superadmin" {
 		RespondWithJSON(w, http.StatusOK, map[string]interface{}{
 			"status":      user.Status,
@@ -335,7 +303,6 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Генерация токенов
 	token, refreshToken, err := h.jwtService.GenerateToken(user.ID, user.Username, user.Role)
 	if err != nil {
 		log.Printf("Failed to generate JWT tokens for user ID %d: %v", user.ID, err)
@@ -354,7 +321,6 @@ func (h *AuthHandler) TelegramAuthHandler(w http.ResponseWriter, r *http.Request
 		"status":        user.Status,
 	})
 }
-
 func (h *AuthHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	RespondWithJSON(w, http.StatusOK, map[string]string{
 		"message": "Logged out successfully",
