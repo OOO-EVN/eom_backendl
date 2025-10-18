@@ -103,8 +103,7 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		position = "Координатор"
 	case "superadmin":
 		position = "Суперадмин"
-	case "courier":
-		position = "Курьер"
+
 	default:
 		position = "Стажер"
 	}
