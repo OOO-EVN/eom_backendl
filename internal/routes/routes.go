@@ -79,7 +79,7 @@ func Setup(cfg *config.Config, database *sql.DB, redisClient *redis.Client) *chi
 		r.Get("/api/shifts/date/{date}", shiftHandlers.GetShiftsByDateHandler(database))
 		r.Get("/api/users/{userID}/shifts", shiftHandlers.GetUserShiftsByIDHandler(database))
 		r.Get("/api/last", geoHandler.GetLast)
-
+		r.Get("/api/history", geoHandler.GetHistory)
 		r.Get("/api/slots/positions", shiftHandlers.GetAvailablePositionsHandler(database))
 		r.Get("/api/slots/times", shiftHandlers.GetAvailableTimeSlotsHandler(database))
 		r.Get("/api/slots/zones", handlers.GetAvailableZonesHandler(database))

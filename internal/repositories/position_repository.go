@@ -60,3 +60,29 @@ func (r *PositionRepository) GetLastPositions(ctx context.Context) ([]models.Las
 	}
 	return result, rows.Err()
 }
+func (r *PositionRepository) GetHistoryByUser(ctx context.Context, userID string, from, to time.Time) ([]models.GeoUpdate, error) {
+	query := `
+		SELECT user_id, lat, lon, speed, accuracy, battery, created_at
+		FROM geo_updates
+		WHERE user_id = $1 AND created_at BETWEEN $2 AND $3
+		ORDER BY created_at ASC`
+
+	rows, err := r.db.QueryContext(ctx, query, userID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var updates []models.GeoUpdate
+	for rows.Next() {
+		var u models.GeoUpdate
+		err := rows.Scan(&u.UserID, &u.Lat, &u.Lon, &u.Speed, &u.Accuracy, &u.Battery, &u.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		updates = append(updates, u)
+	}
+
+	return updates, rows.Err()
+}
+	

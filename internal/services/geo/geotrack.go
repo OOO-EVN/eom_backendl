@@ -67,3 +67,6 @@ func (s *GeoTrackService) GetLastLocations(ctx context.Context) ([]models.LastLo
 	}
 	return locations, nil
 }
+func (s *GeoTrackService) GetHistory(ctx context.Context, userID string, from, to time.Time) ([]models.GeoUpdate, error) {
+	return s.posRepo.GetHistoryByUser(ctx, userID, from, to)
+}
