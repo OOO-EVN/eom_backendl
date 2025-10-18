@@ -1,0 +1,25 @@
+[Unit]
+Description=EOM Backend Service
+After=network.target
+
+[Service]
+# Рабочая директория проекта (где конфиги, БД и т.п.)
+WorkingDirectory=/opt/eomstart
+
+# Основной бинарник (собранный build.sh)
+ExecStart=/opt/eomstart/build/eomstart
+
+# Перезапуск при падении
+Restart=always
+RestartSec=5
+
+# Пользователь (лучше не root, но можно пока оставить)
+User=root
+Group=root
+
+# Логи — через journalctl
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
