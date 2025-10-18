@@ -25,15 +25,20 @@ fi
 chmod +x "$BUILD_DIR/$BINARY_NAME"
 echo "✅ Сборка успешна! Бинарник создан: $BUILD_DIR/$BINARY_NAME"
 
-# 🔁 Копируем бинарник на продакшн путь
+# 🔁 Копируем бинарник на продакшн путь безопасно
 echo "📦 Копируем бинарник в $DEPLOY_DIR..."
 sudo mkdir -p "$DEPLOY_DIR"
-sudo cp "$BUILD_DIR/$BINARY_NAME" "$DEPLOY_DIR/$BINARY_NAME"
-sudo chmod +x "$DEPLOY_DIR/$BINARY_NAME"
 
+# Копируем во временный файл
+TMP_BINARY="$DEPLOY_DIR/$BINARY_NAME.tmp"
+sudo cp "$BUILD_DIR/$BINARY_NAME" "$TMP_BINARY"
+sudo chmod +x "$TMP_BINARY"
+
+# Атомарно заменяем старый бинарник
+sudo mv "$TMP_BINARY" "$DEPLOY_DIR/$BINARY_NAME"
 echo "✅ Бинарник обновлён: $DEPLOY_DIR/$BINARY_NAME"
 
-# 🔄 Перезапускаем сервис
+# 🔄 Перезапускаем сервис безопасно
 if systemctl list-units --full -all | grep -Fq "eomstart.service"; then
     echo "♻️ Перезапуск сервиса eomstart..."
     sudo systemctl daemon-reload
