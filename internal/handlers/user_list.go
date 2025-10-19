@@ -35,7 +35,6 @@ func ListUsersHandler(db *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			// Создаём структуру User, преобразуя sql.NullString в обычный string
 			user := User{
 				ID:        id,
 				Username:  username.String,

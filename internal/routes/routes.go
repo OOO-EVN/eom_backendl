@@ -13,12 +13,12 @@ import (
 	scooterHandlers "github.com/evn/eom_backendl/internal/handlers/scooter"
 	shiftHandlers "github.com/evn/eom_backendl/internal/handlers/shift"
 
+	promoHandlers "github.com/evn/eom_backendl/internal/handlers/promo"
 	"github.com/evn/eom_backendl/internal/middleware" // ваш middleware
 	"github.com/evn/eom_backendl/internal/pkg/response"
 	"github.com/evn/eom_backendl/internal/repositories"
 	authService "github.com/evn/eom_backendl/internal/services/auth"
 	geoService "github.com/evn/eom_backendl/internal/services/geo"
-
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware" // ← алиас!
 	"github.com/go-chi/jwtauth/v5"
@@ -66,7 +66,8 @@ func Setup(cfg *config.Config, database *sql.DB, redisClient *redis.Client) *chi
 	// Защищённые маршруты
 	router.Group(func(r chi.Router) {
 		r.Use(jwtauth.Authenticator(jwtAuth))
-
+		r.Get("/api/daily-promo-codes", promoHandlers.GetDailyPromoCodesHandler(database))
+		r.Post("/api/claim-daily-promo", promoHandlers.ClaimDailyPromoHandler(database))
 		r.Get("/api/profile", profileHandler.GetProfile)
 		r.Post("/api/logout", authHandler.LogoutHandler)
 		r.Post("/api/auth/complete-registration", authHandler.CompleteRegistrationHandler)
@@ -95,7 +96,8 @@ func Setup(cfg *config.Config, database *sql.DB, redisClient *redis.Client) *chi
 		// Superadmin-only
 		r.Group(func(sr chi.Router) {
 			sr.Use(middleware.SuperadminOnly(jwtService))
-
+			sr.Post("/api/admin/promo-codes", promoHandlers.CreatePromoCodeHandler(database))
+			sr.Post("/api/admin/promo-codes/{promoID}/assign", promoHandlers.AssignPromoCodeHandler(database))
 			sr.Get("/api/admin/users", adminHandlers.ListAdminUsersHandler(database))
 			sr.Patch("/api/admin/users/{userID}/role", adminHandlers.UpdateUserRoleHandler(database))
 			sr.Post("/api/admin/roles", adminHandlers.CreateRoleHandler(database))
