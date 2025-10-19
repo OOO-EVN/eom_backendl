@@ -63,7 +63,7 @@ func (r *PositionRepository) GetLastPositions(ctx context.Context) ([]models.Las
 func (r *PositionRepository) GetHistoryByUser(ctx context.Context, userID string, from, to time.Time) ([]models.GeoUpdate, error) {
 	query := `
 		SELECT user_id, lat, lon, speed, accuracy, battery, created_at
-		FROM geo_updates
+		FROM positions
 		WHERE user_id = $1 AND created_at BETWEEN $2 AND $3
 		ORDER BY created_at ASC`
 
@@ -85,4 +85,3 @@ func (r *PositionRepository) GetHistoryByUser(ctx context.Context, userID string
 
 	return updates, rows.Err()
 }
-	
