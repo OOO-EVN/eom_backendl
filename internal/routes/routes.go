@@ -10,6 +10,8 @@ import (
 	authHandlers "github.com/evn/eom_backendl/internal/handlers/auth"
 	geoHandlers "github.com/evn/eom_backendl/internal/handlers/geo"
 	mapHandlers "github.com/evn/eom_backendl/internal/handlers/map"
+
+	// "github.com/evn/eom_backendl/internal/handlers/promo"
 	scooterHandlers "github.com/evn/eom_backendl/internal/handlers/scooter"
 	shiftHandlers "github.com/evn/eom_backendl/internal/handlers/shift"
 
@@ -63,11 +65,14 @@ func Setup(cfg *config.Config, database *sql.DB, redisClient *redis.Client) *chi
 		response.RespondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Защищённые маршруты
 	router.Group(func(r chi.Router) {
 		r.Use(jwtauth.Authenticator(jwtAuth))
-		r.Get("/api/daily-promo-codes", promoHandlers.GetDailyPromoCodesHandler(database))
-		r.Post("/api/claim-daily-promo", promoHandlers.ClaimDailyPromoHandler(database))
+
+		r.Post("/api/promo/upload", promoHandlers.UploadPromoCodesHandler(database))
+		r.Get("/api/promo/stats", promoHandlers.GetPromoStatsHandler(database))
+		r.Post("/api/promo/claim/{brand}", promoHandlers.ClaimPromoByBrandHandler(database))
+
+		// Остальные маршруты
 		r.Get("/api/profile", profileHandler.GetProfile)
 		r.Post("/api/logout", authHandler.LogoutHandler)
 		r.Post("/api/auth/complete-registration", authHandler.CompleteRegistrationHandler)
@@ -85,7 +90,6 @@ func Setup(cfg *config.Config, database *sql.DB, redisClient *redis.Client) *chi
 		r.Get("/api/slots/times", shiftHandlers.GetAvailableTimeSlotsHandler(database))
 		r.Get("/api/slots/zones", handlers.GetAvailableZonesHandler(database))
 		r.Post("/api/admin/generate-shifts", shiftHandlers.GenerateShiftsHandler(database))
-
 		r.Get("/api/scooter-stats/shift", scooterStatsHandler.GetShiftStatsHandler)
 		r.Get("/api/admin/maps", mapHandler.GetMapsHandler)
 		r.Get("/api/admin/maps/{mapID}", mapHandler.GetMapByIDHandler)
@@ -96,8 +100,6 @@ func Setup(cfg *config.Config, database *sql.DB, redisClient *redis.Client) *chi
 		// Superadmin-only
 		r.Group(func(sr chi.Router) {
 			sr.Use(middleware.SuperadminOnly(jwtService))
-			sr.Post("/api/admin/promo-codes", promoHandlers.CreatePromoCodeHandler(database))
-			sr.Post("/api/admin/promo-codes/{promoID}/assign", promoHandlers.AssignPromoCodeHandler(database))
 			sr.Get("/api/admin/users", adminHandlers.ListAdminUsersHandler(database))
 			sr.Patch("/api/admin/users/{userID}/role", adminHandlers.UpdateUserRoleHandler(database))
 			sr.Post("/api/admin/roles", adminHandlers.CreateRoleHandler(database))

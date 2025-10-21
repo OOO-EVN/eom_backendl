@@ -2,7 +2,8 @@ package repositories
 
 import (
 	"database/sql"
-	"time"
+	"errors"
+	"fmt"
 )
 
 type PromoRepository struct {
@@ -13,89 +14,104 @@ func NewPromoRepository(db *sql.DB) *PromoRepository {
 	return &PromoRepository{db: db}
 }
 
-// GetDailyPromos — все промокоды (для отображения)
-func (r *PromoRepository) GetDailyPromos() ([]map[string]interface{}, error) {
-	rows, err := r.db.Query(`
-		SELECT id, date, title, description 
-		FROM daily_promos 
-		ORDER BY date DESC`)
+// ClaimSinglePromoForUser выдаёт 1 промокод указанного бренда
+func (r *PromoRepository) ClaimSinglePromoForUser(brand string, userID int) ([]string, error) {
+	const query = `
+		UPDATE promo_codes 
+		SET assigned_to_user_id = $1, claimed_at = NOW()
+		WHERE id = (
+			SELECT id 
+			FROM promo_codes
+			WHERE brand = $2 
+			  AND assigned_to_user_id IS NULL
+			  AND valid_until >= CURRENT_DATE
+			ORDER BY valid_until, id
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING promo_code;
+	`
+
+	var code string
+	err := r.db.QueryRow(query, userID, brand).Scan(&code)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("нет доступных промокодов для %s", brand)
+		}
+		return nil, fmt.Errorf("ошибка выдачи промокода: %w", err)
+	}
+
+	return []string{code}, nil
+}
+
+// ClaimYandexPairForUser выдаёт 2 промокода YANDEX из одной даты
+func (r *PromoRepository) ClaimYandexPairForUser(userID int) ([]string, error) {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("не удалось начать транзакцию: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Шаг 1: найти дату, у которой есть хотя бы 2 свободных промокода
+	var validUntil string
+	err = tx.QueryRow(`
+		SELECT valid_until::text
+		FROM promo_codes
+		WHERE brand = 'YANDEX'
+		  AND assigned_to_user_id IS NULL
+		  AND valid_until >= CURRENT_DATE
+		GROUP BY valid_until
+		HAVING COUNT(*) >= 2
+		ORDER BY valid_until
+		LIMIT 1
+		FOR UPDATE OF promo_codes SKIP LOCKED
+	`).Scan(&validUntil)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("нет доступных пар промокодов YANDEX")
+		}
+		return nil, fmt.Errorf("ошибка поиска даты для YANDEX: %w", err)
+	}
+
+	// Шаг 2: заблокировать и выдать 2 промокода из этой даты
+	rows, err := tx.Query(`
+		UPDATE promo_codes 
+		SET assigned_to_user_id = $1, claimed_at = NOW()
+		WHERE id IN (
+			SELECT id
+			FROM promo_codes
+			WHERE brand = 'YANDEX'
+			  AND valid_until = $2::date
+			  AND assigned_to_user_id IS NULL
+			ORDER BY id
+			LIMIT 2
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING promo_code;
+	`, userID, validUntil)
+
+	if err != nil {
+		return nil, fmt.Errorf("ошибка выдачи пары YANDEX: %w", err)
 	}
 	defer rows.Close()
 
-	var promos []map[string]interface{}
+	var codes []string
 	for rows.Next() {
-		var id, title, description string
-		var date time.Time
-		if err := rows.Scan(&id, &date, &title, &description); err != nil {
-			return nil, err
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, fmt.Errorf("ошибка чтения промокода: %w", err)
 		}
-		promos = append(promos, map[string]interface{}{
-			"id":          id,
-			"date":        date.Format("2006-01-02"),
-			"title":       title,
-			"description": description,
-		})
-	}
-	return promos, nil
-}
-
-// GetUserClaimedPromoIDs — какие промокоды уже получены
-func (r *PromoRepository) GetUserClaimedPromoIDs(userID int) ([]string, error) {
-	rows, err := r.db.Query(`
-		SELECT promo_id FROM promo_claims WHERE user_id = $1`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, nil
-}
-
-// CreatePromo — админ создаёт
-func (r *PromoRepository) CreatePromo(id, dateStr, title, description string) error {
-	_, err := r.db.Exec(`
-		INSERT INTO daily_promos (id, date, title, description)
-		VALUES ($1, $2::date, $3, $4)
-		ON CONFLICT (id) DO NOTHING`,
-		id, dateStr, title, description)
-	return err
-}
-
-// AssignPromo — админ выдаёт
-func (r *PromoRepository) AssignPromo(promoID string, userID, assignedBy int) error {
-	_, err := r.db.Exec(`
-		INSERT INTO promo_claims (promo_id, user_id, assigned_by)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (promo_id, user_id) DO NOTHING`,
-		promoID, userID, assignedBy)
-	return err
-}
-
-// ClaimByUser — пользователь сам активирует
-func (r *PromoRepository) ClaimByUser(promoID string, userID int) error {
-	// Проверим, что дата промокода <= сегодня
-	var promoDate string
-	err := r.db.QueryRow(`
-		SELECT date FROM daily_promos 
-		WHERE id = $1 AND date <= CURRENT_DATE`, promoID).Scan(&promoDate)
-	if err != nil {
-		return err // либо не существует, либо дата в будущем
+		codes = append(codes, code)
 	}
 
-	_, err = r.db.Exec(`
-		INSERT INTO promo_claims (promo_id, user_id)
-		VALUES ($1, $2)
-		ON CONFLICT (promo_id, user_id) DO NOTHING`,
-		promoID, userID)
-	return err
+	if len(codes) != 2 {
+		return nil, fmt.Errorf("не удалось получить 2 промокода YANDEX (получено: %d)", len(codes))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("ошибка фиксации транзакции: %w", err)
+	}
+
+	return codes, nil
 }
