@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -35,7 +37,6 @@ func isAdmin(userID int, db *sql.DB) bool {
 	if err != nil {
 		return false
 	}
-	// Разрешить доступ для superadmin, supervisor и coordinator
 	return role == "superadmin" || role == "supervisor" || role == "coordinator"
 }
 
@@ -54,9 +55,36 @@ func ClaimPromoByBrandHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		var codes []string
-		var err error
+		var activeBrand string
+		err := db.QueryRow(`
+			SELECT brand 
+			FROM active_promo_brand 
+			WHERE expires_at > NOW()
+		`).Scan(&activeBrand)
+		if err == nil && brand != activeBrand {
+			response.RespondWithError(w, http.StatusForbidden, "Промокоды этого бренда временно недоступны")
+			return
+		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			response.RespondWithError(w, http.StatusInternalServerError, "Ошибка проверки активного бренда")
+			return
+		}
 
+		var existingPromos map[string][]string
+		err = db.QueryRow("SELECT promo_codes FROM users WHERE id = $1", userID).Scan(&existingPromos)
+		if err != nil {
+			response.RespondWithError(w, http.StatusInternalServerError, "Ошибка проверки промокодов")
+			return
+		}
+
+		if codes, exists := existingPromos[brand]; exists && len(codes) > 0 {
+			response.RespondWithJSON(w, http.StatusOK, map[string]interface{}{
+				"promo_codes":     codes,
+				"already_claimed": true,
+			})
+			return
+		}
+
+		var codes []string
 		if brand == "YANDEX" {
 			codes, err = h.repo.ClaimYandexPairForUser(userID)
 		} else {
@@ -68,8 +96,19 @@ func ClaimPromoByBrandHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		if existingPromos == nil {
+			existingPromos = make(map[string][]string)
+		}
+		existingPromos[brand] = codes
+
+		_, err = db.Exec("UPDATE users SET promo_codes = $1 WHERE id = $2", existingPromos, userID)
+		if err != nil {
+			log.Printf("Ошибка сохранения промокодов: %v", err)
+		}
+
 		response.RespondWithJSON(w, http.StatusOK, map[string]interface{}{
-			"promo_codes": codes,
+			"promo_codes":     codes,
+			"already_claimed": false,
 		})
 	}
 }
@@ -79,7 +118,6 @@ type UploadPromoRequest struct {
 }
 
 func UploadPromoCodesHandler(db *sql.DB) http.HandlerFunc {
-	NewPromoHandlers(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, ok := middleware.GetUserIDFromContext(r.Context())
 		if !ok || !isAdmin(userID, db) {
@@ -156,13 +194,27 @@ func GetPromoStatsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		var activeBrand *string
+		err := db.QueryRow(`
+			SELECT brand 
+			FROM active_promo_brand 
+			WHERE expires_at > NOW()
+		`).Scan(&activeBrand)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			response.RespondWithError(w, http.StatusInternalServerError, "Ошибка проверки активного бренда")
+			return
+		}
+
+		whereClause := "assigned_to_user_id IS NULL AND valid_until >= CURRENT_DATE"
+		var args []interface{}
+		if activeBrand != nil {
+			whereClause += " AND brand = $1"
+			args = append(args, *activeBrand)
+		}
+
 		summary := make(map[string]int)
-		rows, err := db.Query(`
-			SELECT brand, COUNT(*)
-			FROM promo_codes
-			WHERE assigned_to_user_id IS NULL AND valid_until >= CURRENT_DATE
-			GROUP BY brand
-		`)
+		query := "SELECT brand, COUNT(*) FROM promo_codes WHERE " + whereClause + " GROUP BY brand"
+		rows, err := db.Query(query, args...)
 		if err != nil {
 			response.RespondWithError(w, http.StatusInternalServerError, "Ошибка статистики")
 			return
@@ -180,13 +232,8 @@ func GetPromoStatsHandler(db *sql.DB) http.HandlerFunc {
 			Counts     map[string]int `json:"counts"`
 		}
 		dateMap := make(map[string]map[string]int)
-		dateRows, err := db.Query(`
-			SELECT valid_until::text, brand, COUNT(*)
-			FROM promo_codes
-			WHERE assigned_to_user_id IS NULL AND valid_until >= CURRENT_DATE
-			GROUP BY valid_until, brand
-			ORDER BY valid_until
-		`)
+		dateQuery := "SELECT valid_until::text, brand, COUNT(*) FROM promo_codes WHERE " + whereClause + " GROUP BY valid_until, brand ORDER BY valid_until"
+		dateRows, err := db.Query(dateQuery, args...)
 		if err != nil {
 			response.RespondWithError(w, http.StatusInternalServerError, "Ошибка статистики по датам")
 			return
@@ -210,6 +257,105 @@ func GetPromoStatsHandler(db *sql.DB) http.HandlerFunc {
 		response.RespondWithJSON(w, http.StatusOK, map[string]interface{}{
 			"summary": summary,
 			"by_date": byDate,
+		})
+	}
+}
+
+type SetActiveBrandRequest struct {
+	Brand string `json:"brand"`
+	Days  int    `json:"days"`
+}
+
+func SetActivePromoBrandHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := middleware.GetUserIDFromContext(r.Context())
+		if !ok || !isAdmin(userID, db) {
+			response.RespondWithError(w, http.StatusForbidden, "Требуются права администратора")
+			return
+		}
+
+		var req SetActiveBrandRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			response.RespondWithError(w, http.StatusBadRequest, "Неверный JSON")
+			return
+		}
+
+		brand := strings.ToUpper(req.Brand)
+		if brand != "JET" && brand != "YANDEX" && brand != "WHOOSH" && brand != "BOLT" {
+			response.RespondWithError(w, http.StatusBadRequest, "Недопустимый бренд")
+			return
+		}
+
+		days := req.Days
+		if days <= 0 {
+			days = 10
+		}
+
+		_, err := db.Exec(`
+			INSERT INTO active_promo_brand (brand, expires_at)
+			VALUES ($1, NOW() + $2 * INTERVAL '1 day')
+			ON CONFLICT ((brand IS NOT NULL)) DO UPDATE
+			SET brand = EXCLUDED.brand, expires_at = EXCLUDED.expires_at;
+		`, brand, days)
+		if err != nil {
+			log.Printf("Ошибка установки активного бренда: %v", err)
+			response.RespondWithError(w, http.StatusInternalServerError, "Ошибка сервера")
+			return
+		}
+
+		response.RespondWithJSON(w, http.StatusOK, map[string]interface{}{
+			"status": "ok",
+		})
+	}
+}
+
+func ClearActivePromoBrandHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := middleware.GetUserIDFromContext(r.Context())
+		if !ok || !isAdmin(userID, db) {
+			response.RespondWithError(w, http.StatusForbidden, "Требуются права администратора")
+			return
+		}
+
+		_, err := db.Exec("DELETE FROM active_promo_brand")
+		if err != nil {
+			log.Printf("Ошибка очистки активного бренда: %v", err)
+			response.RespondWithError(w, http.StatusInternalServerError, "Ошибка сервера")
+			return
+		}
+
+		response.RespondWithJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
+	}
+}
+
+func GetActivePromoBrandHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := middleware.GetUserIDFromContext(r.Context())
+		if !ok || !isAdmin(userID, db) {
+			response.RespondWithError(w, http.StatusForbidden, "Требуются права администратора")
+			return
+		}
+
+		var brand string
+		var expiresAt time.Time
+		err := db.QueryRow(`
+			SELECT brand, expires_at 
+			FROM active_promo_brand 
+			WHERE expires_at > NOW()
+		`).Scan(&brand, &expiresAt)
+
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				response.RespondWithJSON(w, http.StatusOK, nil)
+				return
+			}
+			response.RespondWithError(w, http.StatusInternalServerError, "Ошибка")
+			return
+		}
+
+		response.RespondWithJSON(w, http.StatusOK, map[string]interface{}{
+			"brand":      brand,
+			"expires_at": expiresAt.Format("2006-01-02"),
 		})
 	}
 }

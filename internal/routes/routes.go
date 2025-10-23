@@ -51,7 +51,6 @@ func Setup(cfg *config.Config, database *sql.DB, redisClient *redis.Client) *chi
 	router.Use(middleware.AddUserIDToContext()) // ваш middleware
 
 	// Публичные маршруты
-	router.Post("/api/geo", geoHandler.PostGeo)
 	router.Post("/api/auth/register", authHandler.RegisterHandler)
 	router.Post("/api/auth/login", authHandler.LoginHandler)
 	router.Post("/api/auth/telegram", authHandler.TelegramAuthHandler)
@@ -84,6 +83,8 @@ func Setup(cfg *config.Config, database *sql.DB, redisClient *redis.Client) *chi
 		r.Get("/api/shifts", shiftHandlers.GetShiftsHandler(database))
 		r.Get("/api/shifts/date/{date}", shiftHandlers.GetShiftsByDateHandler(database))
 		r.Get("/api/users/{userID}/shifts", shiftHandlers.GetUserShiftsByIDHandler(database))
+		r.Post("/api/geo", geoHandler.PostGeo)
+
 		r.Get("/api/last", geoHandler.GetLast)
 		r.Get("/api/history", geoHandler.GetHistory)
 		r.Get("/api/slots/positions", shiftHandlers.GetAvailablePositionsHandler(database))
@@ -114,6 +115,11 @@ func Setup(cfg *config.Config, database *sql.DB, redisClient *redis.Client) *chi
 			sr.Post("/api/admin/zones", handlers.CreateZoneHandler(database))
 			sr.Put("/api/admin/zones/{id}", handlers.UpdateZoneHandler(database))
 			sr.Delete("/api/admin/zones/{id}", handlers.DeleteZoneHandler(database))
+
+			r.Post("/api/admin/promo/activate-brand", promoHandlers.SetActivePromoBrandHandler(database))
+			r.Delete("/api/admin/promo/activate-brand", promoHandlers.ClearActivePromoBrandHandler(database))
+			r.Get("/api/admin/promo/active-brand", promoHandlers.GetActivePromoBrandHandler(database))
+
 			sr.Get("/api/admin/app/versions", appVersionHandler.ListVersionsHandler)
 			sr.Post("/api/admin/app/versions", appVersionHandler.CreateVersionHandler)
 			sr.Put("/api/admin/app/versions/{id}", appVersionHandler.UpdateVersionHandler)

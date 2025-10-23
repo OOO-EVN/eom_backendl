@@ -3,18 +3,19 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
-	"github.com/evn/eom_backendl/internal/pkg/response"
 
+	"github.com/evn/eom_backendl/internal/pkg/response"
 )
 
 // ListAdminUsersHandler возвращает список всех пользователей для админов
 func ListAdminUsersHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rows, err := db.Query(`
-			SELECT id, username, first_name, role, status, is_active, created_at 
+			SELECT id, username, first_name, role, status, is_active, created_at, promo_codes
 			FROM users 
 			ORDER BY created_at DESC
 		`)
@@ -29,13 +30,14 @@ func ListAdminUsersHandler(db *sql.DB) http.HandlerFunc {
 
 		for rows.Next() {
 			var user struct {
-				ID        int            `json:"id"`
-				Username  string         `json:"username"`
-				FirstName sql.NullString `json:"first_name"`
-				Role      string         `json:"role"`
-				Status    string         `json:"status"`
-				IsActive  bool           `json:"is_active"`
-				CreatedAt time.Time      `json:"created_at"`
+				ID         int            `json:"id"`
+				Username   string         `json:"username"`
+				FirstName  sql.NullString `json:"first_name"`
+				Role       string         `json:"role"`
+				Status     string         `json:"status"`
+				IsActive   bool           `json:"is_active"`
+				CreatedAt  time.Time      `json:"created_at"`
+				PromoCodes []byte         `json:"promo_codes"`
 			}
 
 			err := rows.Scan(
@@ -46,6 +48,7 @@ func ListAdminUsersHandler(db *sql.DB) http.HandlerFunc {
 				&user.Status,
 				&user.IsActive,
 				&user.CreatedAt,
+				&user.PromoCodes,
 			)
 			if err != nil {
 				log.Printf("Error scanning user row: %v", err)
@@ -58,14 +61,26 @@ func ListAdminUsersHandler(db *sql.DB) http.HandlerFunc {
 				firstName = user.FirstName.String
 			}
 
+			// Парсим promo_codes
+			var promoCodes map[string][]string
+			if user.PromoCodes != nil {
+				if err := json.Unmarshal(user.PromoCodes, &promoCodes); err != nil {
+					log.Printf("Error parsing promo_codes for user %d: %v", user.ID, err)
+					promoCodes = make(map[string][]string)
+				}
+			} else {
+				promoCodes = make(map[string][]string)
+			}
+
 			users = append(users, map[string]interface{}{
-				"id":         user.ID,
-				"username":   user.Username,
-				"first_name": firstName,
-				"role":       user.Role,
-				"status":     user.Status,
-				"is_active":  user.IsActive,
-				"created_at": user.CreatedAt.Format(time.RFC3339), // или "2006-01-02 15:04:05"
+				"id":          user.ID,
+				"username":    user.Username,
+				"first_name":  firstName,
+				"role":        user.Role,
+				"status":      user.Status,
+				"is_active":   user.IsActive,
+				"created_at":  user.CreatedAt.Format(time.RFC3339),
+				"promo_codes": promoCodes,
 			})
 		}
 
@@ -79,8 +94,3 @@ func ListAdminUsersHandler(db *sql.DB) http.HandlerFunc {
 		response.RespondWithJSON(w, http.StatusOK, users)
 	}
 }
-
-// Вспомогательная функция для парсинга JSON (может использоваться в других обработчиках)
-// func parseJSONBody(r *http.Request, v interface{}) error {
-// 	return json.NewDecoder(r.Body).Decode(v)
-// }

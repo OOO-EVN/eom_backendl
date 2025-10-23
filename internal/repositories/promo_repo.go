@@ -52,7 +52,7 @@ func (r *PromoRepository) ClaimYandexPairForUser(userID int) ([]string, error) {
 	}
 	defer tx.Rollback()
 
-	// Шаг 1: найти дату, у которой есть хотя бы 2 свободных промокода
+	// Шаг 1: найти первую дату с хотя бы 2 свободными промокодами (БЕЗ FOR UPDATE - запрещено с GROUP BY)
 	var validUntil string
 	err = tx.QueryRow(`
 		SELECT valid_until::text
@@ -64,7 +64,6 @@ func (r *PromoRepository) ClaimYandexPairForUser(userID int) ([]string, error) {
 		HAVING COUNT(*) >= 2
 		ORDER BY valid_until
 		LIMIT 1
-		FOR UPDATE OF promo_codes SKIP LOCKED
 	`).Scan(&validUntil)
 
 	if err != nil {
@@ -74,7 +73,7 @@ func (r *PromoRepository) ClaimYandexPairForUser(userID int) ([]string, error) {
 		return nil, fmt.Errorf("ошибка поиска даты для YANDEX: %w", err)
 	}
 
-	// Шаг 2: заблокировать и выдать 2 промокода из этой даты
+	// Шаг 2: заблокировать и выдать 2 промокода из найденной даты
 	rows, err := tx.Query(`
 		UPDATE promo_codes 
 		SET assigned_to_user_id = $1, claimed_at = NOW()

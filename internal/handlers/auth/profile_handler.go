@@ -7,9 +7,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/go-chi/jwtauth/v5"
 	"github.com/evn/eom_backendl/internal/pkg/response"
-
+	"github.com/go-chi/jwtauth/v5"
 )
 
 type ProfileHandler struct {
@@ -121,7 +120,7 @@ func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	if user.Zone.Valid && user.Zone.String != "" {
 		finalZone = user.Zone.String
 	} else {
-		finalZone = "Центр"
+		// finalZone = "Центр"
 	}
 
 	response.RespondWithJSON(w, http.StatusOK, map[string]interface{}{

@@ -1,4 +1,3 @@
-// handlers/map_handler.go
 package handlers
 
 import (

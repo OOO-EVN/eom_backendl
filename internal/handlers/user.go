@@ -25,7 +25,7 @@ func (u UserProfileResponse) RespondWithJSON(w http.ResponseWriter, k int, respo
 func GetProfileHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Получаем userID из контекста (должен быть установлен middleware аутентификации)
-		userIDVal := r.Context().Value("userID")
+		userIDVal := r.Context().Value("user_id")
 		if userIDVal == nil {
 			response.RespondWithError(w, http.StatusUnauthorized, "User not authenticated")
 			return

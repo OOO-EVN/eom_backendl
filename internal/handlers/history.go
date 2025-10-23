@@ -13,7 +13,7 @@ import (
 
 func GetHistoryHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, err := strconv.Atoi(chi.URLParam(r, "user"))
+		user_id, err := strconv.Atoi(chi.URLParam(r, "user"))
 		if err != nil {
 			response.RespondWithError(w, http.StatusBadRequest, "Invalid user ID")
 			return
@@ -23,7 +23,7 @@ func GetHistoryHandler(db *sql.DB) http.HandlerFunc {
 			SELECT lat, lng, timestamp FROM location_history 
 			WHERE user_id = $1 
 			ORDER BY timestamp DESC LIMIT 100
-		`, userID)
+		`, user_id)
 		if err != nil {
 			response.RespondWithError(w, http.StatusInternalServerError, "DB error")
 			return

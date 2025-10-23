@@ -24,7 +24,7 @@ func NewJWTService(secretKey string, redisClient *redis.Client) *JWTService {
 	return &JWTService{
 		secretKey:   []byte(secretKey),
 		accessTTL:   120 * time.Minute,
-		refreshTTL:  7 * 24 * time.Hour,
+		refreshTTL:  14 * 24 * time.Hour,
 		redisClient: redisClient,
 	}
 }
