@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/evn/eom_backendl/config"
+	"github.com/evn/eom_backendl/internal/middleware"
 	"github.com/evn/eom_backendl/internal/pkg/response"
 	services "github.com/evn/eom_backendl/internal/services/auth"
 )
@@ -407,7 +407,7 @@ func (h *AuthHandler) TelegramAuthCallbackHandler(w http.ResponseWriter, r *http
 
 func (h *AuthHandler) CompleteRegistrationHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	userIDVal := ctx.Value(config.UserIDKey)
+	userIDVal := ctx.Value(middleware.UserIDContextKey)
 	if userIDVal == nil {
 		response.RespondWithError(w, http.StatusUnauthorized, "User ID not found in context")
 		return

@@ -9,11 +9,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type contextKey string
+// type contextKey string
 
-const (
-	UserIDKey contextKey = "user_id"
-)
+// const (
+// 	UserIDKey contextKey = "user_id"
+// )
 
 type Config struct {
 	DatabaseDSN      string
@@ -29,7 +29,7 @@ func NewConfig() *Config {
 	// ✅ Загружаем .env перед всем остальным
 	_ = godotenv.Load(".env")
 
-	dsn := getEnv("DATABASE_DSN", "./data.db")
+	dsn := getEnv("DATABASE_DSN", "")
 	jwtSecret := getEnv("JWT_SECRET", "0hn/a5hwoWLn4nrmogQo+zDCM7h9203J4Iwhkp7b2ns=")
 	port := getEnv("SERVER_PORT", "6066")
 	telegramBotToken := getEnv("TELEGRAM_BOT_TOKEN", "")

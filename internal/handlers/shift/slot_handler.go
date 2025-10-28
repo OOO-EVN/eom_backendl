@@ -16,10 +16,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/evn/eom_backendl/config"
-	"github.com/go-chi/chi/v5"
+	"github.com/evn/eom_backendl/internal/middleware"
 	"github.com/evn/eom_backendl/internal/pkg/response"
-
+	"github.com/go-chi/chi/v5"
 )
 
 // -------------------------------
@@ -42,7 +41,7 @@ func generateSafeFilename(userID int, ext string) string {
 
 func StartSlotHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value(config.UserIDKey).(int)
+		userID, ok := r.Context().Value(middleware.UserIDContextKey).(int)
 		if !ok {
 			response.RespondWithError(w, http.StatusUnauthorized, "User not authenticated")
 			return
@@ -227,7 +226,7 @@ func canStartShift(slotTimeRange string) bool {
 
 func EndSlotHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value(config.UserIDKey).(int)
+		userID, ok := r.Context().Value(middleware.UserIDContextKey).(int)
 		if !ok {
 			response.RespondWithError(w, http.StatusUnauthorized, "User not authenticated")
 			return
@@ -321,7 +320,7 @@ func GetActiveShiftsHandler(db *sql.DB) http.HandlerFunc {
 
 func GetUserActiveShiftHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value(config.UserIDKey).(int)
+		userID, ok := r.Context().Value(middleware.UserIDContextKey).(int)
 		if !ok {
 			response.RespondWithError(w, http.StatusUnauthorized, "User not authenticated")
 			return
@@ -371,7 +370,7 @@ func GetUserActiveShiftHandler(db *sql.DB) http.HandlerFunc {
 
 func GetShiftsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value(config.UserIDKey).(int)
+		userID, ok := r.Context().Value(middleware.UserIDContextKey).(int)
 		if !ok {
 			response.RespondWithError(w, http.StatusUnauthorized, "User not authenticated")
 			return
@@ -426,7 +425,7 @@ func GetUserShiftsByIDHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		currentUserID, ok := r.Context().Value(config.UserIDKey).(int)
+		currentUserID, ok := r.Context().Value(middleware.UserIDContextKey).(int)
 		if !ok {
 			response.RespondWithError(w, http.StatusUnauthorized, "User not authenticated")
 			return
@@ -489,7 +488,7 @@ func GetUserShiftsByIDHandler(db *sql.DB) http.HandlerFunc {
 
 func GetAvailablePositionsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value(config.UserIDKey).(int)
+		userID, ok := r.Context().Value(middleware.UserIDContextKey).(int)
 		if !ok {
 			response.RespondWithError(w, http.StatusUnauthorized, "User not authenticated")
 			return

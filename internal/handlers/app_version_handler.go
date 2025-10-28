@@ -8,12 +8,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/evn/eom_backendl/config"
+	"github.com/evn/eom_backendl/internal/middleware"
 	"github.com/evn/eom_backendl/internal/models"
+	"github.com/evn/eom_backendl/internal/pkg/response"
 	"github.com/evn/eom_backendl/internal/repositories"
 	"github.com/go-chi/chi/v5"
-	"github.com/evn/eom_backendl/internal/pkg/response"
-
 )
 
 type AppVersionHandler struct {
@@ -30,7 +29,7 @@ func NewAppVersionHandler(db *sql.DB) *AppVersionHandler {
 
 // CheckVersionHandler проверяет наличие обновлений
 func (h *AppVersionHandler) CheckVersionHandler(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(config.UserIDKey).(int)
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(int)
 	if !ok {
 		response.RespondWithError(w, http.StatusUnauthorized, "User not authenticated")
 		return
@@ -190,7 +189,7 @@ func (h *AppVersionHandler) detectPlatform(r *http.Request) string {
 }
 
 func (h *AppVersionHandler) isSuperAdmin(r *http.Request) bool {
-	userID, ok := r.Context().Value(config.UserIDKey).(int)
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(int)
 	if !ok {
 		return false
 	}

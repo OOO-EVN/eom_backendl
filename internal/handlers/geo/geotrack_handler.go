@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/evn/eom_backendl/config"
+	"github.com/evn/eom_backendl/internal/middleware"
 	"github.com/evn/eom_backendl/internal/models"
 	services "github.com/evn/eom_backendl/internal/services/geo"
 
@@ -32,7 +32,7 @@ func (h *GeoTrackHandler) PostGeo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, ok := r.Context().Value(config.UserIDKey).(int)
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(int)
 	if !ok {
 		response.RespondWithError(w, http.StatusUnauthorized, "User ID not found in context")
 		return
